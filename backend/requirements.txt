@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+playwright
+beautifulsoup4
+httpx
+anthropic
+python-dotenv
+pydantic
