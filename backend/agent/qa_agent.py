@@ -1,5 +1,13 @@
 import os
+import asyncio
 import httpx
+
+# Gemini models to try in order (fallback to lighter model on 429)
+GEMINI_MODELS = [
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-1.5-flash-latest",
+]
 
 
 def build_prompt(url: str, aggregated: dict) -> str:
@@ -32,54 +40,48 @@ Generate a structured QA report with:
 Be direct and professional. Use bullet points. Focus on actionable insights."""
 
 
-async def _gemini_summary(prompt: str, api_key: str) -> str:
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}"
+async def _call_gemini(prompt: str, api_key: str, model: str) -> str:
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
     payload = {"contents": [{"parts": [{"text": prompt}]}]}
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=60) as client:
         r = await client.post(url, json=payload)
         r.raise_for_status()
         data = r.json()
         return data["candidates"][0]["content"]["parts"][0]["text"]
 
 
-async def _anthropic_summary(prompt: str, api_key: str) -> str:
-    import anthropic
-    client = anthropic.Anthropic(api_key=api_key)
-    message = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=1024,
-        messages=[{"role": "user", "content": prompt}],
-    )
-    return message.content[0].text
-
-
 async def generate_ai_summary(url: str, aggregated: dict) -> str:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return _fallback_summary(url, aggregated)
+
     prompt = build_prompt(url, aggregated)
+    last_error = None
 
-    gemini_key = os.getenv("GEMINI_API_KEY")
-    anthropic_key = os.getenv("ANTHROPIC_API_KEY")
-
-    # Try Gemini first (free), fall back to Anthropic, then text fallback
-    gemini_error = None
-    if gemini_key:
+    for model in GEMINI_MODELS:
         try:
-            return await _gemini_summary(prompt, gemini_key)
+            print(f"[AI Agent] Trying {model}...")
+            result = await _call_gemini(prompt, api_key, model)
+            print(f"[AI Agent] Success with {model}")
+            return result
+        except httpx.HTTPStatusError as e:
+            last_error = str(e)
+            print(f"[AI Agent] {model} failed: {e.response.status_code}")
+            if e.response.status_code == 429:
+                # Rate limited — wait a bit and try next model
+                await asyncio.sleep(3)
+                continue
+            elif e.response.status_code in (400, 404):
+                # Bad model name or request — try next
+                continue
+            else:
+                break
         except Exception as e:
-            gemini_error = str(e)
-            print(f"[AI Agent] Gemini failed: {e}")
+            last_error = str(e)
+            print(f"[AI Agent] {model} error: {e}")
+            break
 
-    if anthropic_key:
-        try:
-            return await _anthropic_summary(prompt, anthropic_key)
-        except Exception as e:
-            print(f"[AI Agent] Anthropic failed: {e}")
-            errors = f"Gemini: {gemini_error}\nAnthropic: {e}" if gemini_error else str(e)
-            return f"AI summary unavailable: {errors}\n\n" + _fallback_summary(url, aggregated)
-
-    if gemini_error:
-        return f"AI summary unavailable (Gemini): {gemini_error}\n\n" + _fallback_summary(url, aggregated)
-
-    return _fallback_summary(url, aggregated)
+    return f"AI summary unavailable: {last_error}\n\n" + _fallback_summary(url, aggregated)
 
 
 def _fallback_summary(url: str, aggregated: dict) -> str:
