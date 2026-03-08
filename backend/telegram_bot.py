@@ -41,11 +41,11 @@ async def send_message(chat_id: int, text: str, parse_mode: str = "Markdown"):
 
 async def start_qa_job(url: str) -> str:
     async with httpx.AsyncClient() as client:
-        r = await client.post(f"{API_BASE}/analyze", json={"url": url, "max_pages": 20}, timeout=15)
+        r = await client.post(f"{API_BASE}/analyze", json={"url": url, "max_pages": 100}, timeout=15)
         return r.json()["job_id"]
 
 
-async def poll_job(job_id: str, timeout: int = 180) -> dict:
+async def poll_job(job_id: str, timeout: int = 600) -> dict:
     async with httpx.AsyncClient() as client:
         for _ in range(timeout // 3):
             await asyncio.sleep(3)
@@ -60,27 +60,69 @@ def format_report(url: str, result: dict) -> str:
     issues = result.get("issues", {})
     cov = result.get("content_coverage", {})
 
+    meta   = issues.get("missing_meta_description", {}).get("count", 0)
+    h1     = issues.get("missing_h1", {}).get("count", 0)
+    broken = issues.get("broken_images", {}).get("count", 0)
+    alt    = issues.get("missing_alt_tags", {}).get("count", 0)
+    thin   = issues.get("thin_content_under_200_words", {}).get("count", 0)
+    non200 = issues.get("non_200_status", {}).get("count", 0)
+    errors = result.get("error_pages", 0)
+
+    total_issues = meta + h1 + broken + alt + thin + non200
+
+    def fmt(val, warn=1, crit=5):
+        if val == 0:   return f"✅ `{val}`"
+        if val < crit: return f"⚠️ `{val}`"
+        return f"🔴 `{val}`"
+
+    # Overall health score (simple)
+    pages = result.get("pages_crawled", 1) or 1
+    score = max(0, 100 - int(total_issues / pages * 100))
+    if score >= 80:   health = f"🟢 Good ({score}/100)"
+    elif score >= 50: health = f"🟡 Needs work ({score}/100)"
+    else:             health = f"🔴 Poor ({score}/100)"
+
     lines = [
-        f"🔍 *QA Report: {url}*",
+        f"🔍 *QA Report*",
+        f"🌐 {url}",
         f"",
-        f"📄 Pages crawled: *{result.get('pages_crawled', 0)}*",
+        f"📊 *Overview*",
+        f"• Pages crawled: `{result.get('pages_crawled', 0)}`  |  Errors: `{errors}`",
+        f"• Avg word count: `{cov.get('avg_word_count', 0)}` words/page",
+        f"• Thin content pages: `{thin}` ({cov.get('pct_thin_content', 0)}%)",
+        f"• Overall health: {health}",
         f"",
-        f"*Issues:*",
-        f"• Missing meta description: `{issues.get('missing_meta_description', {}).get('count', 0)}` pages",
-        f"• Missing H1: `{issues.get('missing_h1', {}).get('count', 0)}` pages",
-        f"• Broken images: `{issues.get('broken_images', {}).get('count', 0)}`",
-        f"• Missing alt tags: `{issues.get('missing_alt_tags', {}).get('count', 0)}` images",
-        f"• Thin content: `{issues.get('thin_content_under_200_words', {}).get('count', 0)}` pages ({cov.get('pct_thin_content', 0)}%)",
-        f"• Non-200 pages: `{issues.get('non_200_status', {}).get('count', 0)}`",
-        f"",
-        f"*Avg word count:* {cov.get('avg_word_count', 0)} words/page",
+        f"🐛 *Issues Found* — total: `{total_issues}`",
+        f"• Meta description missing:  {fmt(meta)}  pages",
+        f"• H1 tag missing:            {fmt(h1)}  pages",
+        f"• Broken images:             {fmt(broken, 1, 10)}",
+        f"• Images without alt text:   {fmt(alt, 1, 10)}",
+        f"• Non-200 status pages:      {fmt(non200)}",
     ]
+
+    # Top affected URLs for critical issues
+    def url_list(key, sub="urls"):
+        urls = issues.get(key, {}).get(sub, [])[:3]
+        if not urls:
+            return []
+        items = []
+        for u in urls:
+            u_str = u.get("url", u) if isinstance(u, dict) else u
+            items.append(f"  `{u_str}`")
+        return items
+
+    meta_urls = url_list("missing_meta_description")
+    h1_urls   = url_list("missing_h1")
+
+    if meta_urls:
+        lines += ["", "📝 *Pages without meta description:*"] + meta_urls
+    if h1_urls:
+        lines += ["", "📝 *Pages without H1:*"] + h1_urls
 
     ai_summary = result.get("ai_summary", "")
     if ai_summary:
-        # Truncate for Telegram (4096 char limit)
-        summary_lines = ai_summary.strip().split("\n")[:20]
-        lines += ["", "*AI Summary:*", "```", "\n".join(summary_lines), "```"]
+        summary_lines = ai_summary.strip().split("\n")[:15]
+        lines += ["", "🤖 *AI Summary:*", "```", "\n".join(summary_lines), "```"]
 
     return "\n".join(lines)
 

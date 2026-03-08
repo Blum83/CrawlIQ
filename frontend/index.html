@@ -293,7 +293,7 @@
         const res = await fetch('/api/analyze', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({url, max_pages: 30}),
+          body: JSON.stringify({url, max_pages: 100}),
         });
         const job = await res.json();
         if (!res.ok) throw new Error(job.detail || 'Failed to start');
@@ -423,8 +423,7 @@
           ${issueBlock('non200', `Non-200 status: ${non200} pages`, non200 > 0 ? 'critical' : 'ok', non200, issues.non_200_status?.pages)}
         </ul>
 
-        <h2>AI Summary</h2>
-        <div class="ai-summary">${data.ai_summary || 'No summary available'}</div>
+        ${data.ai_summary ? `<h2>AI Summary</h2><div class="ai-summary">${data.ai_summary}</div>` : ''}
 
         <details>
           <summary>Page Details (${(data.page_details || []).length} pages)</summary>

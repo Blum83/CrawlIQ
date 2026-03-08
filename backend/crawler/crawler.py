@@ -3,6 +3,8 @@ from urllib.parse import urljoin, urlparse
 from playwright.async_api import async_playwright
 from bs4 import BeautifulSoup
 
+MAX_CONCURRENT = 5  # max parallel browser pages
+
 
 class SiteCrawler:
     def __init__(self, base_url: str, max_pages: int = 50):
@@ -11,6 +13,7 @@ class SiteCrawler:
         self.max_pages = max_pages
         self.visited: set[str] = set()
         self.pages: list[dict] = []
+        self._sem: asyncio.Semaphore | None = None
 
     def _is_same_domain(self, url: str) -> bool:
         return urlparse(url).netloc == self.domain
@@ -20,6 +23,7 @@ class SiteCrawler:
         return f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/")
 
     async def crawl(self) -> list[dict]:
+        self._sem = asyncio.Semaphore(MAX_CONCURRENT)
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             context = await browser.new_context(
@@ -35,15 +39,16 @@ class SiteCrawler:
             return
         self.visited.add(normalized)
 
-        try:
-            page = await context.new_page()
-            response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-            status_code = response.status if response else 0
-            html = await page.content()
-            await page.close()
-        except Exception as e:
-            self.pages.append({"url": url, "error": str(e), "html": "", "status_code": 0})
-            return
+        async with self._sem:
+            try:
+                page = await context.new_page()
+                response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                status_code = response.status if response else 0
+                html = await page.content()
+                await page.close()
+            except Exception as e:
+                self.pages.append({"url": url, "error": str(e), "html": "", "status_code": 0})
+                return
 
         self.pages.append({
             "url": url,
