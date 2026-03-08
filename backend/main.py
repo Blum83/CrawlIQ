@@ -2,12 +2,10 @@ import os
 import sys
 import asyncio
 
-# Fix for Windows: Playwright requires ProactorEventLoop for subprocess support
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 from dotenv import load_dotenv
-
 load_dotenv()
 
 from fastapi import FastAPI
@@ -30,10 +28,21 @@ app.add_middleware(
 
 app.include_router(router, prefix="/api")
 
-# Serve frontend static files
-frontend_path = os.path.join(os.path.dirname(__file__), "..", "frontend")
-if os.path.exists(frontend_path):
-    app.mount("/", StaticFiles(directory=frontend_path, html=True), name="frontend")
+# Serve frontend — try multiple paths (local dev vs Docker)
+_candidates = [
+    os.path.join(os.path.dirname(__file__), "..", "frontend"),  # local: backend/../frontend
+    "/frontend",                                                  # Docker: copied to /frontend
+    os.path.join(os.path.dirname(__file__), "frontend"),        # flat layout fallback
+]
+
+for _path in _candidates:
+    _path = os.path.abspath(_path)
+    if os.path.isdir(_path) and os.path.exists(os.path.join(_path, "index.html")):
+        try:
+            app.mount("/", StaticFiles(directory=_path, html=True), name="frontend")
+        except Exception:
+            pass
+        break
 
 
 if __name__ == "__main__":
