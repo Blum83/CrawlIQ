@@ -21,6 +21,7 @@ if not BOT_TOKEN:
     raise RuntimeError("TELEGRAM_BOT_TOKEN is not set in .env")
 
 TG_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
+print(f"[Bot] API_BASE = {API_BASE}", flush=True)
 
 
 async def tg_get(method: str, params: dict = None):
