@@ -41,7 +41,10 @@ async def run_analysis(job_id: str, url: str, max_pages: int, exclude_patterns: 
         def on_progress(crawled: int):
             jobs[job_id]["progress"] = crawled
 
-        crawler = SiteCrawler(url, max_pages=max_pages, on_progress=on_progress, exclude_patterns=exclude_patterns)
+        def cancel_check() -> bool:
+            return jobs.get(job_id, {}).get("status") == "cancelled"
+
+        crawler = SiteCrawler(url, max_pages=max_pages, on_progress=on_progress, exclude_patterns=exclude_patterns, cancel_check=cancel_check)
         pages, meta_files = await crawler.crawl()
         jobs[job_id]["total"] = len(pages)
         jobs[job_id]["progress"] = len(pages)
@@ -64,8 +67,9 @@ async def run_analysis(job_id: str, url: str, max_pages: int, exclude_patterns: 
         jobs[job_id]["result"] = aggregated
 
     except Exception as e:
-        jobs[job_id]["status"] = "error"
-        jobs[job_id]["error"] = str(e)
+        if jobs.get(job_id, {}).get("status") != "cancelled":
+            jobs[job_id]["status"] = "error"
+            jobs[job_id]["error"] = str(e)
 
 
 def _run_in_proactor_thread(job_id: str, url: str, max_pages: int, exclude_patterns: list[str]):
@@ -172,6 +176,15 @@ async def export_report_csv(job_id: str):
     data = export_csv(result)
     return Response(content=data, media_type="text/csv",
                     headers={"Content-Disposition": f'attachment; filename="qa-pages-{job_id[:8]}.csv"'})
+
+
+@router.post("/cancel/{job_id}")
+async def cancel_job(job_id: str):
+    if job_id not in jobs:
+        raise HTTPException(status_code=404, detail="Job not found")
+    if jobs[job_id]["status"] == "running":
+        jobs[job_id]["status"] = "cancelled"
+    return {"job_id": job_id, "status": jobs[job_id]["status"]}
 
 
 @router.get("/health")

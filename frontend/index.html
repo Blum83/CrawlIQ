@@ -439,6 +439,9 @@
     <div class="progress-bar-wrap" id="progressWrap">
       <div class="progress-bar" id="progressBar"></div>
     </div>
+    <div id="cancelWrap" style="display:none;margin-bottom:16px">
+      <button id="cancelBtn" onclick="cancelAnalysis()" style="background:#1a1a24;border:1px solid #ef4444;color:#fca5a5;padding:8px 20px;font-size:0.85rem">Cancel</button>
+    </div>
 
     <div id="exportBtns">
       <a id="exportHtml" class="export-btn html" href="#" download>&#8595; HTML Report</a>
@@ -451,6 +454,20 @@
 
   <script>
     let pollInterval = null;
+    let currentJobId = null;
+
+    async function cancelAnalysis() {
+      if (!currentJobId) return;
+      document.getElementById('cancelBtn').disabled = true;
+      try {
+        await fetch(`/api/cancel/${currentJobId}`, { method: 'POST' });
+        setStatus('Cancelled.');
+      } catch {}
+      clearInterval(pollInterval);
+      showProgress(false);
+      document.getElementById('cancelWrap').style.display = 'none';
+      document.getElementById('analyzeBtn').disabled = false;
+    }
 
     function toggleAdvanced() {
       const panel = document.getElementById('advancedPanel');
@@ -487,6 +504,9 @@
         });
         const job = await res.json();
         if (!res.ok) throw new Error(job.detail || 'Failed to start');
+        currentJobId = job.job_id;
+        document.getElementById('cancelBtn').disabled = false;
+        document.getElementById('cancelWrap').style.display = 'block';
         pollStatus(job.job_id);
       } catch (e) {
         setStatus('Error: ' + e.message);
@@ -513,14 +533,22 @@
             setStatus(crawled > 0 ? `Crawling${dot} ${crawled} pages` : `Crawling${dot}`);
           } else if (job.status === 'done') {
             clearInterval(pollInterval);
+            document.getElementById('cancelWrap').style.display = 'none';
             document.getElementById('progressBar').style.width = '100%';
             setStatus('Analysis complete!');
             setTimeout(() => showProgress(false), 600);
             renderReport(job.result);
             showExportButtons(jobId);
             document.getElementById('analyzeBtn').disabled = false;
+          } else if (job.status === 'cancelled') {
+            clearInterval(pollInterval);
+            document.getElementById('cancelWrap').style.display = 'none';
+            setStatus('Cancelled.');
+            showProgress(false);
+            document.getElementById('analyzeBtn').disabled = false;
           } else if (job.status === 'error') {
             clearInterval(pollInterval);
+            document.getElementById('cancelWrap').style.display = 'none';
             setStatus('Error: ' + job.error);
             showProgress(false);
             document.getElementById('analyzeBtn').disabled = false;

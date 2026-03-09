@@ -22,7 +22,7 @@ _DEFAULT_META = {
 
 
 class SiteCrawler:
-    def __init__(self, base_url: str, max_pages: int = 50, on_progress=None, exclude_patterns: list[str] | None = None):
+    def __init__(self, base_url: str, max_pages: int = 50, on_progress=None, exclude_patterns: list[str] | None = None, cancel_check=None):
         self.base_url = base_url.rstrip("/")
         self.domain = urlparse(base_url).netloc
         self.max_pages = max_pages
@@ -30,6 +30,7 @@ class SiteCrawler:
         self.pages: list[dict] = []
         self._sem: asyncio.Semaphore | None = None
         self._on_progress = on_progress  # optional callback(crawled: int)
+        self._cancel_check = cancel_check  # optional callback() -> bool
         self._exclude = [p.strip() for p in (exclude_patterns or []) if p.strip()]
 
     def _is_same_domain(self, url: str) -> bool:
@@ -111,6 +112,8 @@ class SiteCrawler:
         return self.pages, meta_files
 
     async def _crawl_page(self, context, url: str, depth: int = 0):
+        if self._cancel_check and self._cancel_check():
+            return
         normalized = self._normalize(url)
         if normalized in self.visited or len(self.visited) >= self.max_pages:
             return
