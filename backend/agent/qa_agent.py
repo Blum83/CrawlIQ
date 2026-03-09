@@ -6,7 +6,6 @@ import httpx
 GEMINI_MODELS = [
     "gemini-2.0-flash",
     "gemini-2.0-flash-lite",
-    "gemini-1.5-flash-latest",
 ]
 
 
@@ -68,9 +67,13 @@ async def generate_ai_summary(url: str, aggregated: dict) -> str:
             last_error = str(e)
             print(f"[AI Agent] {model} failed: {e.response.status_code}")
             if e.response.status_code == 429:
-                # Rate limited — wait a bit and try next model
-                await asyncio.sleep(3)
-                continue
+                # Rate limited — wait and retry same model once, then try next
+                print(f"[AI Agent] {model} rate limited, waiting 15s...")
+                await asyncio.sleep(15)
+                try:
+                    return await _call_gemini(prompt, api_key, model)
+                except Exception:
+                    continue
             elif e.response.status_code in (400, 404):
                 # Bad model name or request — try next
                 continue

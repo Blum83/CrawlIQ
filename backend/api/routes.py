@@ -47,9 +47,7 @@ async def run_analysis(job_id: str, url: str, max_pages: int):
         # 3. Aggregate
         aggregated = aggregate_reports(page_reports)
 
-        # 4. AI Summary
-        ai_summary = await generate_ai_summary(url, aggregated)
-        aggregated["ai_summary"] = ai_summary
+        aggregated["ai_summary"] = None
         aggregated["target_url"] = url
 
         jobs[job_id]["status"] = "done"
