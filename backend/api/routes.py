@@ -3,12 +3,14 @@ import asyncio
 import threading
 from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 import uuid
 
 from crawler.crawler import SiteCrawler
 from analyzer.analyzer import analyze_page, aggregate_reports
 from agent.qa_agent import generate_ai_summary
+from exporter.export import export_html, export_excel, export_csv
 
 router = APIRouter()
 
@@ -103,6 +105,37 @@ async def get_status(job_id: str):
     if job_id not in jobs:
         raise HTTPException(status_code=404, detail="Job not found")
     return JobStatus(**jobs[job_id])
+
+
+@router.get("/export/{job_id}/html")
+async def export_report_html(job_id: str):
+    if job_id not in jobs or jobs[job_id]["status"] != "done":
+        raise HTTPException(status_code=404, detail="Report not ready")
+    result = jobs[job_id]["result"]
+    html = export_html(result.get("target_url", ""), result)
+    return HTMLResponse(content=html, headers={
+        "Content-Disposition": f'attachment; filename="qa-report-{job_id[:8]}.html"'
+    })
+
+
+@router.get("/export/{job_id}/excel")
+async def export_report_excel(job_id: str):
+    if job_id not in jobs or jobs[job_id]["status"] != "done":
+        raise HTTPException(status_code=404, detail="Report not ready")
+    result = jobs[job_id]["result"]
+    data = export_excel(result.get("target_url", ""), result)
+    return Response(content=data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": f'attachment; filename="qa-report-{job_id[:8]}.xlsx"'})
+
+
+@router.get("/export/{job_id}/csv")
+async def export_report_csv(job_id: str):
+    if job_id not in jobs or jobs[job_id]["status"] != "done":
+        raise HTTPException(status_code=404, detail="Report not ready")
+    result = jobs[job_id]["result"]
+    data = export_csv(result)
+    return Response(content=data, media_type="text/csv",
+                    headers={"Content-Disposition": f'attachment; filename="qa-pages-{job_id[:8]}.csv"'})
 
 
 @router.get("/health")

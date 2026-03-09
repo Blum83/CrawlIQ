@@ -255,6 +255,48 @@
     .badge-red { background: #7f1d1d; color: #fca5a5; }
     .badge-green { background: #14532d; color: #86efac; }
     .badge-yellow { background: #78350f; color: #fcd34d; }
+
+    /* Export buttons */
+    #exportBtns {
+      display: none;
+      gap: 8px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+    }
+
+    .export-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      text-decoration: none;
+      transition: opacity 0.2s;
+      background: #1e2130;
+      border: 1px solid #2d2d3d;
+      color: #e2e8f0;
+    }
+
+    .export-btn:hover { opacity: 0.8; }
+    .export-btn.html { border-color: #7c3aed; color: #a78bfa; }
+    .export-btn.excel { border-color: #22c55e; color: #86efac; }
+    .export-btn.csv { border-color: #3b82f6; color: #93c5fd; }
+
+    /* Mobile fixes */
+    @media (max-width: 500px) {
+      .card { padding: 20px 16px; }
+
+      .input-row {
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      .input-row button {
+        width: 100%;
+      }
+    }
   </style>
 </head>
 <body>
@@ -270,6 +312,12 @@
     <div id="status"></div>
     <div class="progress-bar-wrap" id="progressWrap">
       <div class="progress-bar" id="progressBar"></div>
+    </div>
+
+    <div id="exportBtns">
+      <a id="exportHtml" class="export-btn html" href="#" download>⬇ HTML Report</a>
+      <a id="exportExcel" class="export-btn excel" href="#" download>⬇ Excel</a>
+      <a id="exportCsv" class="export-btn csv" href="#" download>⬇ CSV</a>
     </div>
 
     <div id="report"></div>
@@ -327,6 +375,7 @@
             setStatus('Analysis complete!');
             setTimeout(() => showProgress(false), 600);
             renderReport(job.result);
+            showExportButtons(jobId);
             document.getElementById('analyzeBtn').disabled = false;
           } else if (job.status === 'error') {
             clearInterval(pollInterval);
@@ -375,6 +424,13 @@
         const count = el.querySelectorAll('.issue-url-item').length;
         toggle.textContent = open ? `▲ hide` : `▼ show ${count} URLs`;
       }
+    }
+
+    function showExportButtons(jobId) {
+      document.getElementById('exportBtns').style.display = 'flex';
+      document.getElementById('exportHtml').href = `/api/export/${jobId}/html`;
+      document.getElementById('exportExcel').href = `/api/export/${jobId}/excel`;
+      document.getElementById('exportCsv').href = `/api/export/${jobId}/csv`;
     }
 
     function renderReport(data) {

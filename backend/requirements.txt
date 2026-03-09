@@ -6,3 +6,4 @@ httpx
 anthropic
 python-dotenv
 pydantic
+openpyxl
