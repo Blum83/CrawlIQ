@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
-API_BASE = os.getenv("QA_API_BASE", "http://localhost:8000/api")
+API_BASE = os.getenv("QA_API_BASE", f"http://localhost:{os.getenv('PORT', '8000')}/api")
 
 if not BOT_TOKEN:
     raise RuntimeError("TELEGRAM_BOT_TOKEN is not set in .env")
