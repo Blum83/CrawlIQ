@@ -40,9 +40,17 @@ async def send_message(chat_id: int, text: str, parse_mode: str = "Markdown"):
 
 
 async def start_qa_job(url: str) -> str:
-    async with httpx.AsyncClient() as client:
-        r = await client.post(f"{API_BASE}/analyze", json={"url": url, "max_pages": 100}, timeout=15)
-        return r.json()["job_id"]
+    for attempt in range(3):
+        try:
+            async with httpx.AsyncClient() as client:
+                r = await client.post(f"{API_BASE}/analyze", json={"url": url, "max_pages": 100}, timeout=15)
+                r.raise_for_status()
+                return r.json()["job_id"]
+        except Exception as e:
+            if attempt < 2:
+                await asyncio.sleep(3)
+            else:
+                raise
 
 
 async def poll_job(job_id: str, timeout: int = 600) -> dict:
