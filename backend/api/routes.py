@@ -34,8 +34,11 @@ async def run_analysis(job_id: str, url: str, max_pages: int):
     jobs[job_id]["status"] = "running"
 
     try:
-        # 1. Crawl
-        crawler = SiteCrawler(url, max_pages=max_pages)
+        # 1. Crawl (progress updated in real-time via callback)
+        def on_progress(crawled: int):
+            jobs[job_id]["progress"] = crawled
+
+        crawler = SiteCrawler(url, max_pages=max_pages, on_progress=on_progress)
         pages = await crawler.crawl()
         jobs[job_id]["total"] = len(pages)
         jobs[job_id]["progress"] = len(pages)

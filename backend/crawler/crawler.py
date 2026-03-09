@@ -7,13 +7,14 @@ MAX_CONCURRENT = 5  # max parallel browser pages
 
 
 class SiteCrawler:
-    def __init__(self, base_url: str, max_pages: int = 50):
+    def __init__(self, base_url: str, max_pages: int = 50, on_progress=None):
         self.base_url = base_url.rstrip("/")
         self.domain = urlparse(base_url).netloc
         self.max_pages = max_pages
         self.visited: set[str] = set()
         self.pages: list[dict] = []
         self._sem: asyncio.Semaphore | None = None
+        self._on_progress = on_progress  # optional callback(crawled: int)
 
     def _is_same_domain(self, url: str) -> bool:
         return urlparse(url).netloc == self.domain
@@ -56,6 +57,9 @@ class SiteCrawler:
             "status_code": status_code,
             "error": None,
         })
+
+        if self._on_progress:
+            self._on_progress(len(self.pages))
 
         soup = BeautifulSoup(html, "html.parser")
         links = []

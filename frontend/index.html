@@ -316,9 +316,12 @@
           const dot = '.'.repeat(dots + 1);
 
           if (job.status === 'running') {
-            const p = job.total > 0 ? Math.round(job.progress / job.total * 100) : 30;
+            const crawled = job.progress || 0;
+            const total = job.total || 0;
+            const p = crawled > 0 ? Math.min(crawled / (total || crawled) * 100, 95) : 10;
             document.getElementById('progressBar').style.width = p + '%';
-            setStatus(`Crawling${dot} ${job.progress}/${job.total} pages`);
+            const pageInfo = crawled > 0 ? ` ${crawled} pages` : '';
+            setStatus(`Crawling${dot}${pageInfo}`);
           } else if (job.status === 'done') {
             clearInterval(pollInterval);
             document.getElementById('progressBar').style.width = '100%';
