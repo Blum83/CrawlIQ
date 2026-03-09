@@ -44,7 +44,7 @@ async def start_qa_job(url: str) -> str:
     for attempt in range(3):
         try:
             async with httpx.AsyncClient() as client:
-                r = await client.post(f"{API_BASE}/analyze", json={"url": url, "max_pages": 100}, timeout=15)
+                r = await client.post(f"{API_BASE}/analyze", json={"url": url, "max_pages": 200}, timeout=15)
                 r.raise_for_status()
                 return r.json()["job_id"]
         except Exception as e:
@@ -54,14 +54,36 @@ async def start_qa_job(url: str) -> str:
                 raise
 
 
-async def poll_job(job_id: str, timeout: int = 600) -> dict:
+async def poll_job(job_id: str, chat_id: int, timeout: int = 900) -> dict:
+    progress_interval = 30  # send update every 30 seconds
+    elapsed = 0
+    last_progress = -1
+
     async with httpx.AsyncClient() as client:
-        for _ in range(timeout // 3):
+        while elapsed < timeout:
             await asyncio.sleep(3)
+            elapsed += 3
+
             r = await client.get(f"{API_BASE}/status/{job_id}", timeout=10)
             data = r.json()
+
             if data["status"] in ("done", "error"):
                 return data
+
+            # Send progress update every 30s
+            if elapsed % progress_interval == 0:
+                crawled = data.get("progress", 0)
+                total = data.get("total", 0)
+                if crawled != last_progress:
+                    last_progress = crawled
+                    pct = int(crawled / 200 * 100) if crawled else 0
+                    bar = "█" * (pct // 10) + "░" * (10 - pct // 10)
+                    msg = f"⏳ Still crawling... `{crawled}/200` pages `[{bar}]`"
+                    try:
+                        await send_message(chat_id, msg)
+                    except Exception:
+                        pass
+
     return {"status": "error", "error": "Timeout"}
 
 
@@ -167,8 +189,8 @@ async def handle_update(update: dict):
 
         try:
             job_id = await start_qa_job(url)
-            await send_message(chat_id, f"🕷 Crawling in progress\\.\\.\\. I'll ping you when done\\.", parse_mode="MarkdownV2")
-            job = await poll_job(job_id)
+            await send_message(chat_id, f"🕷 Crawling up to 200 pages\\.\\.\\. I'll send updates every 30s\\.", parse_mode="MarkdownV2")
+            job = await poll_job(job_id, chat_id)
 
             if job["status"] == "error":
                 await send_message(chat_id, f"❌ Error: {job.get('error', 'Unknown')}")
@@ -185,7 +207,7 @@ async def handle_update(update: dict):
         await send_message(chat_id, f"⏳ Analyzing `{url}`\\.\\.\\.", parse_mode="MarkdownV2")
         try:
             job_id = await start_qa_job(url)
-            job = await poll_job(job_id)
+            job = await poll_job(job_id, chat_id)
             if job["status"] == "error":
                 await send_message(chat_id, f"❌ Error: {job.get('error', 'Unknown')}")
             else:
