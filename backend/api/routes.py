@@ -81,11 +81,43 @@ def _run_in_proactor_thread(job_id: str, url: str, max_pages: int, exclude_patte
         loop.close()
 
 
+def _validate_url(url: str) -> str:
+    """Validate and sanitize URL. Returns cleaned URL or raises HTTPException."""
+    url = url.strip()
+
+    # Must start with http:// or https://
+    if not url.lower().startswith(("http://", "https://")):
+        raise HTTPException(status_code=400, detail="URL must start with http:// or https://")
+
+    parsed = urlparse(url)
+
+    # Must have a real hostname
+    if not parsed.netloc or "." not in parsed.netloc:
+        raise HTTPException(status_code=400, detail="Invalid URL: missing or malformed hostname")
+
+    # Hostname must contain only valid characters
+    import re
+    if not re.match(r'^[a-zA-Z0-9._\-\[\]:]+$', parsed.netloc):
+        raise HTTPException(status_code=400, detail="Invalid URL: hostname contains illegal characters")
+
+    # Block private/local networks
+    hostname = parsed.hostname or ""
+    blocked_hosts = ("localhost", "127.0.0.1", "0.0.0.0", "::1")
+    if hostname in blocked_hosts or hostname.startswith("192.168.") or hostname.startswith("10.") or hostname.startswith("172."):
+        raise HTTPException(status_code=400, detail="Scanning local/private networks is not allowed")
+
+    # Limit URL length
+    if len(url) > 500:
+        raise HTTPException(status_code=400, detail="URL is too long (max 500 characters)")
+
+    # Return only scheme + netloc + path (strip query/fragment injections)
+    clean = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/") or f"{parsed.scheme}://{parsed.netloc}"
+    return clean
+
+
 @router.post("/analyze", response_model=JobStatus)
 async def start_analysis(req: AnalyzeRequest, background_tasks: BackgroundTasks):
-    parsed = urlparse(req.url)
-    if not parsed.scheme or not parsed.netloc:
-        raise HTTPException(status_code=400, detail="Invalid URL")
+    url = _validate_url(req.url)
 
     job_id = str(uuid.uuid4())
     jobs[job_id] = {
@@ -98,7 +130,7 @@ async def start_analysis(req: AnalyzeRequest, background_tasks: BackgroundTasks)
     }
 
     # Use a thread with its own ProactorEventLoop so Playwright can spawn subprocesses
-    t = threading.Thread(target=_run_in_proactor_thread, args=(job_id, req.url, req.max_pages, req.exclude_patterns), daemon=True)
+    t = threading.Thread(target=_run_in_proactor_thread, args=(job_id, url, req.max_pages, req.exclude_patterns), daemon=True)
     t.start()
 
     return JobStatus(**jobs[job_id])

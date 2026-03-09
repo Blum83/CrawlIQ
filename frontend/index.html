@@ -463,6 +463,12 @@
       let url = document.getElementById('urlInput').value.trim();
       if (!url) return alert('Enter a URL');
       if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+      try {
+        const p = new URL(url);
+        if (!p.hostname.includes('.')) throw new Error();
+      } catch {
+        return alert('Please enter a valid website URL, e.g. https://example.com');
+      }
       document.getElementById('urlInput').value = url;
 
       const rawPatterns = document.getElementById('excludePatterns').value;
