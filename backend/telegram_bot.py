@@ -133,7 +133,7 @@ def format_report(url: str, result: dict) -> str:
 
     # Top affected URLs for critical issues
     def url_list(key, sub="urls"):
-        urls = issues.get(key, {}).get(sub, [])[:3]
+        urls = issues.get(key, {}).get(sub, [])[:10]
         if not urls:
             return []
         items = []
@@ -145,7 +145,7 @@ def format_report(url: str, result: dict) -> str:
     meta_urls = url_list("missing_meta_description")
     h1_urls   = url_list("missing_h1")
 
-    non200_pages = issues.get("non_200_status", {}).get("pages", [])[:5]
+    non200_pages = issues.get("non_200_status", {}).get("pages", [])[:10]
     non200_items = [f"  `{p.get('url', '')}` — *{p.get('status', '?')}*" for p in non200_pages]
 
     if meta_urls:
