@@ -55,7 +55,7 @@ async def start_qa_job(url: str) -> str:
 
 
 async def poll_job(job_id: str, chat_id: int, timeout: int = 900) -> dict:
-    progress_interval = 30  # send update every 30 seconds
+    progress_interval = 5  # send update every 5 seconds
     elapsed = 0
     last_progress = -1
 
