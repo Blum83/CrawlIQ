@@ -21,6 +21,7 @@ jobs: dict[str, dict] = {}
 class AnalyzeRequest(BaseModel):
     url: str
     max_pages: int = 50
+    exclude_patterns: list[str] = []
 
 
 class JobStatus(BaseModel):
@@ -32,7 +33,7 @@ class JobStatus(BaseModel):
     error: str | None = None
 
 
-async def run_analysis(job_id: str, url: str, max_pages: int):
+async def run_analysis(job_id: str, url: str, max_pages: int, exclude_patterns: list[str] = []):
     jobs[job_id]["status"] = "running"
 
     try:
@@ -40,7 +41,7 @@ async def run_analysis(job_id: str, url: str, max_pages: int):
         def on_progress(crawled: int):
             jobs[job_id]["progress"] = crawled
 
-        crawler = SiteCrawler(url, max_pages=max_pages, on_progress=on_progress)
+        crawler = SiteCrawler(url, max_pages=max_pages, on_progress=on_progress, exclude_patterns=exclude_patterns)
         pages = await crawler.crawl()
         jobs[job_id]["total"] = len(pages)
         jobs[job_id]["progress"] = len(pages)
@@ -64,7 +65,7 @@ async def run_analysis(job_id: str, url: str, max_pages: int):
         jobs[job_id]["error"] = str(e)
 
 
-def _run_in_proactor_thread(job_id: str, url: str, max_pages: int):
+def _run_in_proactor_thread(job_id: str, url: str, max_pages: int, exclude_patterns: list[str]):
     """Run analysis in a thread with its own ProactorEventLoop (Windows fix)."""
     if sys.platform == "win32":
         loop = asyncio.ProactorEventLoop()
@@ -72,7 +73,7 @@ def _run_in_proactor_thread(job_id: str, url: str, max_pages: int):
         loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     try:
-        loop.run_until_complete(run_analysis(job_id, url, max_pages))
+        loop.run_until_complete(run_analysis(job_id, url, max_pages, exclude_patterns))
     finally:
         loop.close()
 
@@ -94,7 +95,7 @@ async def start_analysis(req: AnalyzeRequest, background_tasks: BackgroundTasks)
     }
 
     # Use a thread with its own ProactorEventLoop so Playwright can spawn subprocesses
-    t = threading.Thread(target=_run_in_proactor_thread, args=(job_id, req.url, req.max_pages), daemon=True)
+    t = threading.Thread(target=_run_in_proactor_thread, args=(job_id, req.url, req.max_pages, req.exclude_patterns), daemon=True)
     t.start()
 
     return JobStatus(**jobs[job_id])

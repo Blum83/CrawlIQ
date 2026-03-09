@@ -7,7 +7,7 @@ MAX_CONCURRENT = 5  # max parallel browser pages
 
 
 class SiteCrawler:
-    def __init__(self, base_url: str, max_pages: int = 50, on_progress=None):
+    def __init__(self, base_url: str, max_pages: int = 50, on_progress=None, exclude_patterns: list[str] | None = None):
         self.base_url = base_url.rstrip("/")
         self.domain = urlparse(base_url).netloc
         self.max_pages = max_pages
@@ -15,9 +15,14 @@ class SiteCrawler:
         self.pages: list[dict] = []
         self._sem: asyncio.Semaphore | None = None
         self._on_progress = on_progress  # optional callback(crawled: int)
+        self._exclude = [p.strip() for p in (exclude_patterns or []) if p.strip()]
 
     def _is_same_domain(self, url: str) -> bool:
         return urlparse(url).netloc == self.domain
+
+    def _is_excluded(self, url: str) -> bool:
+        path = urlparse(url).path
+        return any(pat in path for pat in self._exclude)
 
     def _normalize(self, url: str) -> str:
         parsed = urlparse(url)
@@ -37,6 +42,8 @@ class SiteCrawler:
     async def _crawl_page(self, context, url: str):
         normalized = self._normalize(url)
         if normalized in self.visited or len(self.visited) >= self.max_pages:
+            return
+        if self._is_excluded(url):
             return
         self.visited.add(normalized)
 
@@ -70,6 +77,7 @@ class SiteCrawler:
             if (
                 self._is_same_domain(full_url)
                 and norm not in self.visited
+                and not self._is_excluded(full_url)
                 and not any(full_url.endswith(ext) for ext in [".pdf", ".jpg", ".png", ".zip", ".css", ".js"])
             ):
                 links.append(full_url)

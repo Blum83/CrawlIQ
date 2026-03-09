@@ -284,6 +284,61 @@
     .export-btn.excel { border-color: #22c55e; color: #86efac; }
     .export-btn.csv { border-color: #3b82f6; color: #93c5fd; }
 
+    /* Advanced options */
+    .advanced-toggle {
+      font-size: 0.82rem;
+      color: #64748b;
+      cursor: pointer;
+      user-select: none;
+      margin-bottom: 16px;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .advanced-toggle:hover { color: #a78bfa; }
+
+    .advanced-panel {
+      display: none;
+      margin-bottom: 20px;
+      padding: 16px;
+      background: #0f0f13;
+      border: 1px solid #2d2d3d;
+      border-radius: 10px;
+    }
+
+    .advanced-panel.open { display: block; }
+
+    .advanced-panel label {
+      display: block;
+      font-size: 0.8rem;
+      color: #64748b;
+      margin-bottom: 6px;
+    }
+
+    .advanced-panel textarea {
+      width: 100%;
+      background: #1a1a24;
+      border: 1px solid #2d2d3d;
+      border-radius: 8px;
+      padding: 10px 12px;
+      color: #e2e8f0;
+      font-size: 0.82rem;
+      font-family: monospace;
+      resize: vertical;
+      min-height: 80px;
+      outline: none;
+      line-height: 1.6;
+    }
+
+    .advanced-panel textarea:focus { border-color: #7c3aed; }
+
+    .advanced-panel .hint {
+      font-size: 0.75rem;
+      color: #475569;
+      margin-top: 6px;
+    }
+
     /* Mobile fixes */
     @media (max-width: 500px) {
       .card { padding: 20px 16px; }
@@ -309,6 +364,15 @@
       <button id="analyzeBtn" onclick="startAnalysis()">Analyze</button>
     </div>
 
+    <span class="advanced-toggle" onclick="toggleAdvanced()">
+      <span id="advToggleArrow">▶</span> Advanced options
+    </span>
+    <div class="advanced-panel" id="advancedPanel">
+      <label>Exclude URL paths (one per line)</label>
+      <textarea id="excludePatterns" placeholder="/tag/&#10;/page/&#10;/author/&#10;/category/"></textarea>
+      <div class="hint">Any URL whose path contains one of these strings will be skipped during crawl.</div>
+    </div>
+
     <div id="status"></div>
     <div class="progress-bar-wrap" id="progressWrap">
       <div class="progress-bar" id="progressBar"></div>
@@ -326,11 +390,21 @@
   <script>
     let pollInterval = null;
 
+    function toggleAdvanced() {
+      const panel = document.getElementById('advancedPanel');
+      const arrow = document.getElementById('advToggleArrow');
+      const open = panel.classList.toggle('open');
+      arrow.textContent = open ? '▼' : '▶';
+    }
+
     async function startAnalysis() {
       let url = document.getElementById('urlInput').value.trim();
       if (!url) return alert('Enter a URL');
       if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
       document.getElementById('urlInput').value = url;
+
+      const rawPatterns = document.getElementById('excludePatterns').value;
+      const exclude_patterns = rawPatterns.split('\n').map(s => s.trim()).filter(Boolean);
 
       document.getElementById('analyzeBtn').disabled = true;
       document.getElementById('report').style.display = 'none';
@@ -341,7 +415,7 @@
         const res = await fetch('/api/analyze', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({url, max_pages: 600}),
+          body: JSON.stringify({url, max_pages: 600, exclude_patterns}),
         });
         const job = await res.json();
         if (!res.ok) throw new Error(job.detail || 'Failed to start');
