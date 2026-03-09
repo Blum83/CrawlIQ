@@ -142,17 +142,28 @@ def format_report(url: str, result: dict) -> str:
     elif score >= 50: health = f"🟡 Needs work ({score}/100)"
     else:             health = f"🔴 Poor ({score}/100)"
 
+    indexable     = result.get("indexable_pages", result.get("pages_crawled", 0))
+    non_indexable = result.get("non_indexable_pages", 0)
+    idx_info      = result.get("indexability", {})
+    noindex_cnt   = idx_info.get("noindex", {}).get("count", 0)
+    canon_away    = idx_info.get("canonicalized_away", {}).get("count", 0)
+
     lines = [
         f"🔍 *QA Report*",
         f"🌐 {url}",
         f"",
         f"📊 *Overview*",
         f"• Pages crawled: `{result.get('pages_crawled', 0)}`  |  Errors: `{errors}`",
+        f"• Indexable: `{indexable}`  |  Non-indexable: `{non_indexable}`",
         f"• Avg word count: `{cov.get('avg_word_count', 0)}` words/page",
         f"• Thin content pages: `{thin}` ({cov.get('pct_thin_content', 0)}%)",
         f"• Overall health: {health}",
         f"",
-        f"🐛 *Issues* — total: `{total_issues}`",
+        f"🗂 *Indexability*",
+        f"• Noindex pages:          {fmt(noindex_cnt)}",
+        f"• Canonicalized away:     {fmt(canon_away)}",
+        f"",
+        f"🐛 *Issues (indexable pages)* — total: `{total_issues}`",
         f"",
         f"*SEO*",
         f"• Title missing:         {fmt(missing_title)}",
@@ -183,7 +194,15 @@ def format_report(url: str, result: dict) -> str:
     non200_pages = issues.get("non_200_status", {}).get("pages", [])[:10]
     non200_items = [f"  `{p.get('url', '')}` — *{p.get('status', '?')}*" for p in non200_pages]
 
+    noindex_urls = idx_info.get("noindex", {}).get("urls", [])[:10]
+    noindex_items = [f"  `{u}`" for u in noindex_urls]
+
+    canon_away_pages = idx_info.get("canonicalized_away", {}).get("urls", [])[:10]
+    canon_away_items = [f"  `{p.get('url', '')}` → `{p.get('canonical', '')}`" for p in canon_away_pages]
+
     for label, items in [
+        ("🚫 *Noindex pages:*",                  noindex_items),
+        ("🔀 *Canonicalized away:*",              canon_away_items),
         ("📝 *Pages without title:*",            url_list("missing_title")),
         ("📝 *Pages without meta description:*", url_list("missing_meta_description")),
         ("📝 *Pages without H1:*",               url_list("missing_h1")),

@@ -10,6 +10,12 @@ class PageReport:
     status_code: int
     error: str | None = None
 
+    # Indexability
+    is_noindex: bool = False        # <meta name="robots" content="noindex">
+    is_nofollow: bool = False       # <meta name="robots" content="nofollow">
+    canonical_url: str = ""         # href of canonical tag (empty if absent)
+    is_canonicalized_away: bool = False  # canonical points to a different URL
+
     # SEO
     has_title: bool = False
     title: str = ""
@@ -38,6 +44,15 @@ class PageReport:
     has_error: bool = False
 
 
+def _normalize_url(url: str) -> str:
+    """Normalize URL for comparison: lowercase scheme+host, strip trailing slash."""
+    try:
+        p = urlparse(url)
+        return f"{p.scheme.lower()}://{p.netloc.lower()}{p.path}".rstrip("/")
+    except Exception:
+        return url.rstrip("/")
+
+
 def analyze_page(page_data: dict, base_domain: str) -> PageReport:
     url = page_data["url"]
     html = page_data.get("html", "")
@@ -57,6 +72,13 @@ def analyze_page(page_data: dict, base_domain: str) -> PageReport:
     if html_tag and html_tag.get("lang", "").strip():
         report.html_has_lang = True
 
+    # Robots meta tag (noindex / nofollow)
+    robots_meta = soup.find("meta", attrs={"name": re.compile(r"^robots$", re.I)})
+    if robots_meta:
+        robots_content = robots_meta.get("content", "").lower()
+        report.is_noindex  = "noindex"  in robots_content
+        report.is_nofollow = "nofollow" in robots_content
+
     # Title
     title_tag = soup.find("title")
     if title_tag and title_tag.get_text(strip=True):
@@ -73,6 +95,12 @@ def analyze_page(page_data: dict, base_domain: str) -> PageReport:
     canonical = soup.find("link", attrs={"rel": "canonical"})
     if canonical and canonical.get("href", "").strip():
         report.has_canonical = True
+        canon_href = canonical["href"].strip()
+        report.canonical_url = canon_href
+        # Canonicalized away: canonical points to a different URL
+        norm_page   = _normalize_url(url)
+        norm_canon  = _normalize_url(canon_href)
+        report.is_canonicalized_away = bool(norm_canon and norm_canon != norm_page)
 
     # H1
     h1_tags = soup.find_all("h1")
@@ -129,26 +157,33 @@ def aggregate_reports(page_reports: list[PageReport]) -> dict:
     valid = [r for r in page_reports if not r.has_error]
     error_pages = [r for r in page_reports if r.has_error]
 
+    # Indexability
+    noindex_pages        = [r for r in valid if r.is_noindex]
+    canonicalized_away   = [r for r in valid if r.is_canonicalized_away]
+    non_indexable        = {r.url for r in noindex_pages} | {r.url for r in canonicalized_away}
+    # SEO checks only on truly indexable pages
+    indexable            = [r for r in valid if r.url not in non_indexable]
+
     # SEO
-    missing_title       = [r for r in valid if not r.has_title]
+    missing_title       = [r for r in indexable if not r.has_title]
     missing_meta        = [r for r in valid if not r.has_meta_description]
-    missing_h1          = [r for r in valid if not r.has_h1]
-    multiple_h1         = [r for r in valid if r.h1_count > 1]
-    missing_canonical   = [r for r in valid if not r.has_canonical]
+    missing_h1          = [r for r in indexable if not r.has_h1]
+    multiple_h1         = [r for r in indexable if r.h1_count > 1]
+    missing_canonical   = [r for r in indexable if not r.has_canonical]
 
-    # Accessibility
-    missing_lang        = [r for r in valid if not r.html_has_lang]
-    missing_alt_pages   = [r for r in valid if r.images_missing_alt > 0]
+    # Accessibility (on indexable pages)
+    missing_lang        = [r for r in indexable if not r.html_has_lang]
+    missing_alt_pages   = [r for r in indexable if r.images_missing_alt > 0]
     broken_img_pages    = [r for r in valid if r.broken_images]
-    buttons_unlabeled   = [r for r in valid if r.buttons_missing_label > 0]
+    buttons_unlabeled   = [r for r in indexable if r.buttons_missing_label > 0]
 
-    # Content
-    thin_content        = [r for r in valid if 0 < r.word_count < 200]
-    empty_pages         = [r for r in valid if r.is_empty]
+    # Content (on indexable pages)
+    thin_content        = [r for r in indexable if 0 < r.word_count < 200]
+    empty_pages         = [r for r in indexable if r.is_empty]
 
-    # Duplicate titles
+    # Duplicate titles (on indexable pages)
     title_counts: dict[str, list[str]] = {}
-    for r in valid:
+    for r in indexable:
         if r.title:
             title_counts.setdefault(r.title, []).append(r.url)
     duplicate_title_urls = [url for urls in title_counts.values() if len(urls) > 1 for url in urls]
@@ -159,7 +194,19 @@ def aggregate_reports(page_reports: list[PageReport]) -> dict:
     return {
         "total_pages": total,
         "pages_crawled": len(valid),
+        "indexable_pages": len(indexable),
+        "non_indexable_pages": len(non_indexable),
         "error_pages": len(error_pages),
+        "indexability": {
+            "noindex": {
+                "count": len(noindex_pages),
+                "urls": [r.url for r in noindex_pages],
+            },
+            "canonicalized_away": {
+                "count": len(canonicalized_away),
+                "urls": [{"url": r.url, "canonical": r.canonical_url} for r in canonicalized_away],
+            },
+        },
         "issues": {
             # SEO
             "missing_title": {
@@ -231,6 +278,10 @@ def aggregate_reports(page_reports: list[PageReport]) -> dict:
                 "title": r.title,
                 "has_title": r.has_title,
                 "has_meta_description": r.has_meta_description,
+                "indexable": not r.is_noindex and not r.is_canonicalized_away and not r.has_error,
+                "is_noindex": r.is_noindex,
+                "is_canonicalized_away": r.is_canonicalized_away,
+                "canonical_url": r.canonical_url,
                 "has_canonical": r.has_canonical,
                 "has_h1": r.has_h1,
                 "h1_count": r.h1_count,
