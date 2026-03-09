@@ -320,8 +320,7 @@
             const total = job.total || 0;
             const p = crawled > 0 ? Math.min(crawled / (total || crawled) * 100, 95) : 10;
             document.getElementById('progressBar').style.width = p + '%';
-            const pageInfo = crawled > 0 ? ` ${crawled} pages` : '';
-            setStatus(`Crawling${dot}${pageInfo}`);
+            setStatus(crawled > 0 ? `Crawling${dot} ${crawled} pages` : `Crawling${dot}`);
           } else if (job.status === 'done') {
             clearInterval(pollInterval);
             document.getElementById('progressBar').style.width = '100%';
