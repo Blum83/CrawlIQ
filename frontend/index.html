@@ -395,8 +395,9 @@
       if (!urls || urls.length === 0) return '';
       return urls.map(u => {
         const display = typeof u === 'object' ? u.url : u;
-        const badge = typeof u === 'object' ? `<span class="badge badge-red">${u.status}</span>` : '';
-        return `<div class="issue-url-item">${badge}<a href="${display}" target="_blank" title="${display}">${display}</a></div>`;
+        const badge = u?.status ? `<span class="badge badge-red">${u.status}</span>` : '';
+        const extra = u?.canonical ? ` <span style="color:#888;font-size:0.82em">→ ${u.canonical}</span>` : '';
+        return `<div class="issue-url-item">${badge}<a href="${display}" target="_blank" title="${display}">${display}</a>${extra}</div>`;
       }).join('');
     }
 
@@ -436,30 +437,58 @@
     function renderReport(data) {
       const issues = data.issues || {};
       const cov = data.content_coverage || {};
+      const idx = data.indexability || {};
 
-      const missingMeta = issues.missing_meta_description?.count || 0;
-      const missingH1 = issues.missing_h1?.count || 0;
-      const brokenImg = issues.broken_images?.count || 0;
-      const missingAlt = issues.missing_alt_tags?.count || 0;
-      const thinContent = issues.thin_content_under_200_words?.count || 0;
-      const non200 = issues.non_200_status?.count || 0;
+      // SEO
+      const missingTitle  = issues.missing_title?.count || 0;
+      const missingMeta   = issues.missing_meta_description?.count || 0;
+      const missingH1     = issues.missing_h1?.count || 0;
+      const multipleH1    = issues.multiple_h1?.count || 0;
+      const missingCanon  = issues.missing_canonical?.count || 0;
+      const dupTitles     = issues.duplicate_titles?.count || 0;
+      // Accessibility
+      const missingLang   = issues.missing_html_lang?.count || 0;
+      const missingAlt    = issues.missing_alt_tags?.count || 0;
+      const missingBtn    = issues.buttons_missing_label?.count || 0;
+      // Content
+      const thinContent   = issues.thin_content_under_200_words?.count || 0;
+      const emptyPages    = issues.empty_pages?.count || 0;
+      // Technical
+      const brokenImg     = issues.broken_images?.count || 0;
+      const non200        = issues.non_200_status?.count || 0;
+      // Indexability
+      const noindexCount  = idx.noindex?.count || 0;
+      const canonAwayCount = idx.canonicalized_away?.count || 0;
 
-      const totalIssues = missingMeta + missingH1 + brokenImg + missingAlt + thinContent + non200;
+      const totalIssues = missingTitle + missingMeta + missingH1 + multipleH1 + missingCanon + dupTitles
+                        + missingLang + missingAlt + missingBtn
+                        + thinContent + emptyPages + brokenImg + non200;
 
-      const pageRows = (data.page_details || []).map(p => `
-        <tr>
-          <td title="${p.url}">${p.url}</td>
-          <td><span class="badge ${p.status_code === 200 ? 'badge-green' : 'badge-red'}">${p.status_code || 'ERR'}</span></td>
-          <td>${p.has_meta_description ? '<span class="badge badge-green">Yes</span>' : '<span class="badge badge-red">No</span>'}</td>
-          <td>${p.has_h1 ? '<span class="badge badge-green">Yes</span>' : '<span class="badge badge-red">No</span>'}</td>
-          <td>${p.images_missing_alt > 0 ? `<span class="badge badge-yellow">${p.images_missing_alt}</span>` : '<span class="badge badge-green">0</span>'}</td>
-          <td>${p.word_count < 200 ? `<span class="badge badge-yellow">${p.word_count}</span>` : p.word_count}</td>
-        </tr>
-      `).join('');
+      const pageRows = (data.page_details || []).map(p => {
+        const indexBadge = p.indexable
+          ? '<span class="badge badge-green">Yes</span>'
+          : '<span class="badge badge-red">No</span>';
+        return `
+          <tr>
+            <td title="${p.url}">${p.url}</td>
+            <td><span class="badge ${p.status_code === 200 ? 'badge-green' : 'badge-red'}">${p.status_code || 'ERR'}</span></td>
+            <td>${indexBadge}</td>
+            <td>${p.has_title ? '<span class="badge badge-green">Yes</span>' : '<span class="badge badge-red">No</span>'}</td>
+            <td>${p.has_meta_description ? '<span class="badge badge-green">Yes</span>' : '<span class="badge badge-red">No</span>'}</td>
+            <td>${p.has_h1 ? `<span class="badge ${p.h1_count > 1 ? 'badge-yellow' : 'badge-green'}">${p.h1_count}</span>` : '<span class="badge badge-red">0</span>'}</td>
+            <td>${p.images_missing_alt > 0 ? `<span class="badge badge-yellow">${p.images_missing_alt}</span>` : '<span class="badge badge-green">0</span>'}</td>
+            <td>${p.word_count < 200 ? `<span class="badge badge-yellow">${p.word_count}</span>` : p.word_count}</td>
+          </tr>`;
+      }).join('');
+
 
       document.getElementById('report').innerHTML = `
         <div class="stat-grid">
           <div class="stat-box"><div class="value">${data.pages_crawled || 0}</div><div class="label">Pages Crawled</div></div>
+          <div class="stat-box ok"><div class="value">${data.indexable_pages || 0}</div><div class="label">Indexable Pages</div></div>
+          <div class="stat-box ${data.non_indexable_pages > 0 ? '' : 'ok'}">
+            <div class="value">${data.non_indexable_pages || 0}</div><div class="label">Non-Indexable</div>
+          </div>
           <div class="stat-box ${totalIssues > 10 ? '' : totalIssues > 0 ? 'warn' : 'ok'}">
             <div class="value">${totalIssues}</div><div class="label">Total Issues</div>
           </div>
@@ -471,13 +500,34 @@
           </div>
         </div>
 
-        <h2>Issues</h2>
+        <h2>Indexability</h2>
         <ul class="issue-list">
+          ${issueBlock('noindex', `Noindex pages: ${noindexCount}`, noindexCount > 0 ? '' : 'ok', noindexCount, idx.noindex?.urls)}
+          ${issueBlock('canonaway', `Canonicalized away: ${canonAwayCount} pages`, canonAwayCount > 0 ? '' : 'ok', canonAwayCount, idx.canonicalized_away?.urls)}
+        </ul>
+
+        <h2>SEO</h2>
+        <ul class="issue-list">
+          ${issueBlock('title', `Missing title: ${missingTitle} pages`, missingTitle > 0 ? 'critical' : 'ok', missingTitle, issues.missing_title?.urls)}
           ${issueBlock('meta', `Missing meta description: ${missingMeta} pages`, missingMeta > 0 ? (missingMeta > 5 ? 'critical' : '') : 'ok', missingMeta, issues.missing_meta_description?.urls)}
           ${issueBlock('h1', `Missing H1: ${missingH1} pages`, missingH1 > 0 ? (missingH1 > 3 ? 'critical' : '') : 'ok', missingH1, issues.missing_h1?.urls)}
-          ${issueBlock('broken', `Broken images: ${brokenImg}`, brokenImg > 0 ? 'critical' : 'ok', brokenImg, issues.broken_images?.pages)}
+          ${issueBlock('multih1', `Multiple H1 tags: ${multipleH1} pages`, multipleH1 > 0 ? '' : 'ok', multipleH1, issues.multiple_h1?.urls)}
+          ${issueBlock('canon', `Missing canonical: ${missingCanon} pages`, missingCanon > 0 ? '' : 'ok', missingCanon, issues.missing_canonical?.urls)}
+          ${issueBlock('duptitles', `Duplicate titles: ${dupTitles} pages`, dupTitles > 0 ? '' : 'ok', dupTitles, issues.duplicate_titles?.urls)}
+        </ul>
+
+        <h2>Accessibility</h2>
+        <ul class="issue-list">
+          ${issueBlock('lang', `Missing HTML lang attribute: ${missingLang} pages`, missingLang > 0 ? 'critical' : 'ok', missingLang, issues.missing_html_lang?.urls)}
           ${issueBlock('alt', `Missing alt tags: ${missingAlt} images across ${(issues.missing_alt_tags?.pages || []).length} pages`, missingAlt > 0 ? '' : 'ok', missingAlt, issues.missing_alt_tags?.pages)}
+          ${issueBlock('btn', `Buttons without label: ${missingBtn} across ${(issues.buttons_missing_label?.pages || []).length} pages`, missingBtn > 0 ? '' : 'ok', missingBtn, issues.buttons_missing_label?.pages)}
+        </ul>
+
+        <h2>Content &amp; Technical</h2>
+        <ul class="issue-list">
           ${issueBlock('thin', `Thin content (<200 words): ${thinContent} pages (${cov.pct_thin_content || 0}%)`, thinContent > 0 ? '' : 'ok', thinContent, issues.thin_content_under_200_words?.urls)}
+          ${issueBlock('empty', `Empty pages: ${emptyPages}`, emptyPages > 0 ? 'critical' : 'ok', emptyPages, issues.empty_pages?.urls)}
+          ${issueBlock('broken', `Broken images: ${brokenImg}`, brokenImg > 0 ? 'critical' : 'ok', brokenImg, issues.broken_images?.pages)}
           ${issueBlock('non200', `Non-200 status: ${non200} pages`, non200 > 0 ? 'critical' : 'ok', non200, issues.non_200_status?.pages)}
         </ul>
 
@@ -487,7 +537,7 @@
           <summary>Page Details (${(data.page_details || []).length} pages)</summary>
           <table>
             <thead>
-              <tr><th>URL</th><th>Status</th><th>Meta</th><th>H1</th><th>No Alt</th><th>Words</th></tr>
+              <tr><th>URL</th><th>Status</th><th>Indexable</th><th>Title</th><th>Meta</th><th>H1</th><th>No Alt</th><th>Words</th></tr>
             </thead>
             <tbody>${pageRows}</tbody>
           </table>
