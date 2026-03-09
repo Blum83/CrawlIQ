@@ -365,6 +365,41 @@
     .tech-label { color: #94a3b8; }
     .tech-detail { color: #64748b; font-size: 0.8rem; }
 
+    /* Modal */
+    .modal-backdrop {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.6);
+      z-index: 100;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-backdrop.open { display: flex; }
+    .modal {
+      background: #1a1a24;
+      border: 1px solid #ef4444;
+      border-radius: 14px;
+      padding: 28px 28px 20px;
+      max-width: 360px;
+      width: 90%;
+      text-align: center;
+    }
+    .modal-icon { font-size: 2rem; margin-bottom: 10px; }
+    .modal-title { font-size: 1rem; font-weight: 700; color: #fca5a5; margin-bottom: 8px; }
+    .modal-msg { font-size: 0.88rem; color: #94a3b8; line-height: 1.6; margin-bottom: 20px; }
+    .modal-close {
+      background: linear-gradient(135deg, #7c3aed, #3b82f6);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 9px 28px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .modal-close:hover { opacity: 0.88; }
+
     /* Table filter row */
     .table-filter-row {
       display: flex;
@@ -452,9 +487,33 @@
     <div id="report"></div>
   </div>
 
+  <div class="modal-backdrop" id="errorModal" onclick="closeModal(event)">
+    <div class="modal">
+      <div class="modal-icon">⚠️</div>
+      <div class="modal-title" id="modalTitle">Invalid URL</div>
+      <div class="modal-msg" id="modalMsg"></div>
+      <button class="modal-close" onclick="closeModal()">Got it</button>
+    </div>
+  </div>
+
   <script>
     let pollInterval = null;
     let currentJobId = null;
+
+    function showModal(title, msg) {
+      document.getElementById('modalTitle').textContent = title;
+      document.getElementById('modalMsg').textContent = msg;
+      document.getElementById('errorModal').classList.add('open');
+    }
+
+    function closeModal(e) {
+      if (e && e.target !== document.getElementById('errorModal')) return;
+      document.getElementById('errorModal').classList.remove('open');
+    }
+
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape') document.getElementById('errorModal').classList.remove('open');
+    });
 
     async function cancelAnalysis() {
       if (!currentJobId) return;
@@ -478,13 +537,14 @@
 
     async function startAnalysis() {
       let url = document.getElementById('urlInput').value.trim();
-      if (!url) return alert('Enter a URL');
+      if (!url) { showModal('Enter a URL', 'Please paste the website address you want to audit, e.g. https://example.com'); return; }
       if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
       try {
         const p = new URL(url);
         if (!p.hostname.includes('.')) throw new Error();
       } catch {
-        return alert('Please enter a valid website URL, e.g. https://example.com');
+        showModal('Invalid URL', 'Please enter a valid website URL starting with https://, e.g. https://example.com');
+        return;
       }
       document.getElementById('urlInput').value = url;
 
@@ -503,7 +563,7 @@
           body: JSON.stringify({url, max_pages: 600, exclude_patterns}),
         });
         const job = await res.json();
-        if (!res.ok) throw new Error(job.detail || 'Failed to start');
+        if (!res.ok) { showModal('Cannot start analysis', job.detail || 'Failed to start'); document.getElementById('analyzeBtn').disabled = false; showProgress(false); return; }
         currentJobId = job.job_id;
         document.getElementById('cancelBtn').disabled = false;
         document.getElementById('cancelWrap').style.display = 'block';
