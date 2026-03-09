@@ -39,7 +39,7 @@
       border-radius: 16px;
       padding: 32px;
       width: 100%;
-      max-width: 700px;
+      max-width: 900px;
     }
 
     .input-row {
@@ -255,6 +255,7 @@
     .badge-red { background: #7f1d1d; color: #fca5a5; }
     .badge-green { background: #14532d; color: #86efac; }
     .badge-yellow { background: #78350f; color: #fcd34d; }
+    .badge-blue { background: #1e3a5f; color: #93c5fd; }
 
     /* Export buttons */
     #exportBtns {
@@ -339,6 +340,66 @@
       margin-top: 6px;
     }
 
+    /* Technical setup block */
+    .tech-setup {
+      background: #0f0f13;
+      border: 1px solid #2d2d3d;
+      border-radius: 10px;
+      padding: 16px 20px;
+      margin-bottom: 24px;
+      font-size: 0.88rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 20px;
+    }
+
+    .tech-setup-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .tech-ok { color: #22c55e; font-weight: 700; }
+    .tech-bad { color: #ef4444; font-weight: 700; }
+    .tech-label { color: #94a3b8; }
+    .tech-detail { color: #64748b; font-size: 0.8rem; }
+
+    /* Table filter row */
+    .table-filter-row {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+
+    .table-filter-row input[type="text"] {
+      flex: 1;
+      min-width: 180px;
+      background: #0f0f13;
+      border: 1px solid #2d2d3d;
+      border-radius: 8px;
+      padding: 8px 12px;
+      color: #e2e8f0;
+      font-size: 0.85rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .table-filter-row input[type="text"]:focus { border-color: #7c3aed; }
+
+    .table-filter-row select {
+      background: #0f0f13;
+      border: 1px solid #2d2d3d;
+      border-radius: 8px;
+      padding: 8px 12px;
+      color: #e2e8f0;
+      font-size: 0.85rem;
+      outline: none;
+      cursor: pointer;
+    }
+
+    .table-filter-row select:focus { border-color: #7c3aed; }
+
     /* Mobile fixes */
     @media (max-width: 500px) {
       .card { padding: 20px 16px; }
@@ -365,7 +426,7 @@
     </div>
 
     <span class="advanced-toggle" onclick="toggleAdvanced()">
-      <span id="advToggleArrow">▶</span> Advanced options
+      <span id="advToggleArrow">&#9658;</span> Advanced options
     </span>
     <div class="advanced-panel" id="advancedPanel">
       <label>Exclude URL paths (one per line)</label>
@@ -379,9 +440,9 @@
     </div>
 
     <div id="exportBtns">
-      <a id="exportHtml" class="export-btn html" href="#" download>⬇ HTML Report</a>
-      <a id="exportExcel" class="export-btn excel" href="#" download>⬇ Excel</a>
-      <a id="exportCsv" class="export-btn csv" href="#" download>⬇ CSV</a>
+      <a id="exportHtml" class="export-btn html" href="#" download>&#8595; HTML Report</a>
+      <a id="exportExcel" class="export-btn excel" href="#" download>&#8595; Excel</a>
+      <a id="exportCsv" class="export-btn csv" href="#" download>&#8595; CSV</a>
     </div>
 
     <div id="report"></div>
@@ -394,7 +455,7 @@
       const panel = document.getElementById('advancedPanel');
       const arrow = document.getElementById('advToggleArrow');
       const open = panel.classList.toggle('open');
-      arrow.textContent = open ? '▼' : '▶';
+      arrow.textContent = open ? '\u25BC' : '\u25BA';
     }
 
     async function startAnalysis() {
@@ -467,17 +528,25 @@
 
     function makeUrlList(urls) {
       if (!urls || urls.length === 0) return '';
-      return urls.map(u => {
-        const display = typeof u === 'object' ? u.url : u;
+      const shown = urls.slice(0, 10);
+      const remaining = urls.length - shown.length;
+      const items = shown.map(u => {
+        const display = typeof u === 'object' ? (u.url || u.redirect_to || JSON.stringify(u)) : u;
+        const actualUrl = typeof u === 'object' ? (u.url || display) : u;
         const badge = u?.status ? `<span class="badge badge-red">${u.status}</span>` : '';
-        const extra = u?.canonical ? ` <span style="color:#888;font-size:0.82em">→ ${u.canonical}</span>` : '';
-        return `<div class="issue-url-item">${badge}<a href="${display}" target="_blank" title="${display}">${display}</a>${extra}</div>`;
+        const extra = u?.canonical ? ` <span style="color:#888;font-size:0.82em">&#8594; ${u.canonical}</span>` : '';
+        const redir = u?.redirect_to ? ` <span style="color:#888;font-size:0.82em">&#8594; ${u.redirect_to}</span>` : '';
+        return `<div class="issue-url-item">${badge}<a href="${actualUrl}" target="_blank" title="${actualUrl}">${actualUrl}</a>${extra}${redir}</div>`;
       }).join('');
+      const moreHint = remaining > 0
+        ? `<div style="color:#64748b;font-size:0.78rem;padding:4px 0">...and ${remaining} more</div>`
+        : '';
+      return items + moreHint;
     }
 
     function issueBlock(id, label, cls, count, urlList) {
       const hasUrls = urlList && urlList.length > 0;
-      const toggleHint = hasUrls ? `<span class="issue-toggle">▼ show ${urlList.length} URLs</span>` : '';
+      const toggleHint = hasUrls ? `<span class="issue-toggle">&#9660; show ${urlList.length} URLs</span>` : '';
       const urlsHtml = hasUrls
         ? `<div class="issue-urls" id="urls-${id}">${makeUrlList(urlList)}</div>`
         : '';
@@ -497,7 +566,7 @@
       const toggle = header.querySelector('.issue-toggle');
       if (toggle) {
         const count = el.querySelectorAll('.issue-url-item').length;
-        toggle.textContent = open ? `▲ hide` : `▼ show ${count} URLs`;
+        toggle.textContent = open ? '\u25B2 hide' : `\u25BC show ${count} URLs`;
       }
     }
 
@@ -508,10 +577,74 @@
       document.getElementById('exportCsv').href = `/api/export/${jobId}/csv`;
     }
 
+    // ── Score calculation ──────────────────────────────────────────────────────
+
+    function calcScore(data) {
+      const issues = data.issues || {};
+      function cnt(key) { return issues[key]?.count || 0; }
+
+      let score = 100;
+
+      // missing_title: -15 per page, cap -20
+      score -= Math.min(cnt('missing_title') * 15, 20);
+      // missing_meta_description: -2 per page, cap -15
+      score -= Math.min(cnt('missing_meta_description') * 2, 15);
+      // missing_h1: -3 per page, cap -15
+      score -= Math.min(cnt('missing_h1') * 3, 15);
+      // multiple_h1: -1 per page, cap -5
+      score -= Math.min(cnt('multiple_h1') * 1, 5);
+      // missing_canonical: -1 per page, cap -10
+      score -= Math.min(cnt('missing_canonical') * 1, 10);
+      // duplicate_titles: -2 per page, cap -10
+      score -= Math.min(cnt('duplicate_titles') * 2, 10);
+      // missing_html_lang: -10 if any
+      if (cnt('missing_html_lang') > 0) score -= 10;
+      // non_200_status: -5 per page, cap -15
+      score -= Math.min(cnt('non_200_status') * 5, 15);
+      // slow_pages: -2 per page, cap -10
+      score -= Math.min(cnt('slow_pages') * 2, 10);
+      // js_dependent_pages: -3 per page, cap -10
+      score -= Math.min(cnt('js_dependent_pages') * 3, 10);
+      // missing_og: -1 per page, cap -10
+      score -= Math.min(cnt('missing_og') * 1, 10);
+
+      return Math.max(0, score);
+    }
+
+    // ── Table filtering ────────────────────────────────────────────────────────
+
+    function applyTableFilters() {
+      const search = (document.getElementById('tableSearch')?.value || '').toLowerCase();
+      const filter = document.getElementById('tableFilter')?.value || '';
+      const rows = document.querySelectorAll('#pageDetailsBody tr');
+      rows.forEach(row => {
+        const url = (row.dataset.url || '').toLowerCase();
+        const matchSearch = !search || url.includes(search);
+        let matchFilter = true;
+        if (filter) {
+          switch (filter) {
+            case 'indexable':     matchFilter = row.dataset.indexable === 'true'; break;
+            case 'not-indexable': matchFilter = row.dataset.indexable === 'false'; break;
+            case 'no-title':      matchFilter = row.dataset.hasTitle === 'false'; break;
+            case 'no-meta':       matchFilter = row.dataset.hasMeta === 'false'; break;
+            case 'no-h1':         matchFilter = row.dataset.hasH1 === 'false'; break;
+            case 'slow':          matchFilter = row.dataset.slow === 'true'; break;
+            case 'js-dependent':  matchFilter = row.dataset.jsDep === 'true'; break;
+            case 'redirect':      matchFilter = row.dataset.redirect === 'true'; break;
+          }
+        }
+        row.style.display = (matchSearch && matchFilter) ? '' : 'none';
+      });
+    }
+
+    // ── Main render ───────────────────────────────────────────────────────────
+
     function renderReport(data) {
       const issues = data.issues || {};
       const cov = data.content_coverage || {};
       const idx = data.indexability || {};
+      const perf = data.performance || {};
+      const meta = data.meta_files || {};
 
       // SEO
       const missingTitle  = issues.missing_title?.count || 0;
@@ -520,6 +653,12 @@
       const multipleH1    = issues.multiple_h1?.count || 0;
       const missingCanon  = issues.missing_canonical?.count || 0;
       const dupTitles     = issues.duplicate_titles?.count || 0;
+      // Title/meta quality
+      const titleTooLong   = issues.title_too_long?.count || 0;
+      const titleTooShort  = issues.title_too_short?.count || 0;
+      const metaTooLong    = issues.meta_description_too_long?.count || 0;
+      const metaTooShort   = issues.meta_description_too_short?.count || 0;
+      const dupMeta        = issues.duplicate_meta_descriptions?.count || 0;
       // Accessibility
       const missingLang   = issues.missing_html_lang?.count || 0;
       const missingAlt    = issues.missing_alt_tags?.count || 0;
@@ -533,17 +672,53 @@
       // Indexability
       const noindexCount  = idx.noindex?.count || 0;
       const canonAwayCount = idx.canonicalized_away?.count || 0;
+      // Performance
+      const slowPgs       = issues.slow_pages?.count || 0;
+      const jsDep         = issues.js_dependent_pages?.count || 0;
+      const redirectPgs   = issues.redirect_pages?.count || 0;
+      const deepPgs       = issues.deep_pages?.count || 0;
+      const avgLoad       = perf.avg_load_time_ms || 0;
+      // OG & Schema
+      const missingOg     = issues.missing_og?.count || 0;
+      const missingSchema = issues.missing_schema?.count || 0;
+      // URL quality
+      const urlIssues     = issues.url_issues?.count || 0;
 
       const totalIssues = missingTitle + missingMeta + missingH1 + multipleH1 + missingCanon + dupTitles
                         + missingLang + missingAlt + missingBtn
                         + thinContent + emptyPages + brokenImg + non200;
 
+      const score = calcScore(data);
+      const scoreCls = score >= 80 ? 'ok' : score >= 60 ? 'warn' : '';
+
+      // Build page detail rows
       const pageRows = (data.page_details || []).map(p => {
         const indexBadge = p.indexable
           ? '<span class="badge badge-green">Yes</span>'
           : '<span class="badge badge-red">No</span>';
+        const ogBadge = p.has_og_title && p.has_og_image
+          ? '<span class="badge badge-green">Yes</span>'
+          : '<span class="badge badge-red">No</span>';
+        const schemaBadge = p.has_schema_org
+          ? '<span class="badge badge-green">Yes</span>'
+          : '<span class="badge badge-yellow">No</span>';
+        const redirectBadge = p.is_redirect
+          ? '<span class="badge badge-yellow">Yes</span>'
+          : '';
+        const loadDisplay = p.load_time_ms > 3000
+          ? `<span class="badge badge-red">${p.load_time_ms}</span>`
+          : p.load_time_ms > 0 ? p.load_time_ms : '-';
         return `
-          <tr>
+          <tr
+            data-url="${p.url}"
+            data-indexable="${p.indexable}"
+            data-has-title="${p.has_title}"
+            data-has-meta="${p.has_meta_description}"
+            data-has-h1="${p.has_h1}"
+            data-slow="${p.load_time_ms > 3000}"
+            data-js-dep="${p.js_dependent || false}"
+            data-redirect="${p.is_redirect || false}"
+          >
             <td title="${p.url}">${p.url}</td>
             <td><span class="badge ${p.status_code === 200 ? 'badge-green' : 'badge-red'}">${p.status_code || 'ERR'}</span></td>
             <td>${indexBadge}</td>
@@ -552,9 +727,21 @@
             <td>${p.has_h1 ? `<span class="badge ${p.h1_count > 1 ? 'badge-yellow' : 'badge-green'}">${p.h1_count}</span>` : '<span class="badge badge-red">0</span>'}</td>
             <td>${p.images_missing_alt > 0 ? `<span class="badge badge-yellow">${p.images_missing_alt}</span>` : '<span class="badge badge-green">0</span>'}</td>
             <td>${p.word_count < 200 ? `<span class="badge badge-yellow">${p.word_count}</span>` : p.word_count}</td>
+            <td>${loadDisplay}</td>
+            <td>${p.crawl_depth !== undefined ? p.crawl_depth : '-'}</td>
+            <td>${ogBadge}</td>
+            <td>${schemaBadge}</td>
+            <td>${redirectBadge}</td>
           </tr>`;
       }).join('');
 
+      // Technical setup block
+      const robotsTxt = meta.robots_txt_exists
+        ? `<span class="tech-ok">&#10003; found</span>${meta.robots_disallows?.length ? `<span class="tech-detail">(${meta.robots_disallows.length} disallow rules)</span>` : ''}`
+        : `<span class="tech-bad">&#10007; not found</span>`;
+      const sitemapInfo = meta.sitemap_exists
+        ? `<span class="tech-ok">&#10003; found</span>${meta.sitemap_urls?.length ? `<span class="tech-detail">(${meta.sitemap_urls.length} sample URLs)</span>` : ''}`
+        : `<span class="tech-bad">&#10007; not found</span>`;
 
       document.getElementById('report').innerHTML = `
         <div class="stat-grid">
@@ -572,6 +759,19 @@
           <div class="stat-box ${data.error_pages > 0 ? '' : 'ok'}">
             <div class="value">${data.error_pages || 0}</div><div class="label">Error Pages</div>
           </div>
+          <div class="stat-box ${scoreCls}">
+            <div class="value">${score}</div><div class="label">SEO Score</div>
+          </div>
+        </div>
+
+        <h2>Technical Setup</h2>
+        <div class="tech-setup">
+          <div class="tech-setup-item">
+            <span class="tech-label">robots.txt:</span> ${robotsTxt}
+          </div>
+          <div class="tech-setup-item">
+            <span class="tech-label">sitemap.xml:</span> ${sitemapInfo}
+          </div>
         </div>
 
         <h2>Indexability</h2>
@@ -588,6 +788,11 @@
           ${issueBlock('multih1', `Multiple H1 tags: ${multipleH1} pages`, multipleH1 > 0 ? '' : 'ok', multipleH1, issues.multiple_h1?.urls)}
           ${issueBlock('canon', `Missing canonical: ${missingCanon} pages`, missingCanon > 0 ? '' : 'ok', missingCanon, issues.missing_canonical?.urls)}
           ${issueBlock('duptitles', `Duplicate titles: ${dupTitles} pages`, dupTitles > 0 ? '' : 'ok', dupTitles, issues.duplicate_titles?.urls)}
+          ${issueBlock('titletoolong', `Title too long (&gt;60 chars): ${titleTooLong} pages`, titleTooLong > 0 ? '' : 'ok', titleTooLong, issues.title_too_long?.urls)}
+          ${issueBlock('titlestooshort', `Title too short (&lt;10 chars): ${titleTooShort} pages`, titleTooShort > 0 ? '' : 'ok', titleTooShort, issues.title_too_short?.urls)}
+          ${issueBlock('metatoolong', `Meta description too long (&gt;160 chars): ${metaTooLong} pages`, metaTooLong > 0 ? '' : 'ok', metaTooLong, issues.meta_description_too_long?.urls)}
+          ${issueBlock('metatooshort', `Meta description too short (&lt;70 chars): ${metaTooShort} pages`, metaTooShort > 0 ? '' : 'ok', metaTooShort, issues.meta_description_too_short?.urls)}
+          ${issueBlock('dupmeta', `Duplicate meta descriptions: ${dupMeta} pages`, dupMeta > 0 ? '' : 'ok', dupMeta, issues.duplicate_meta_descriptions?.urls)}
         </ul>
 
         <h2>Accessibility</h2>
@@ -599,21 +804,59 @@
 
         <h2>Content &amp; Technical</h2>
         <ul class="issue-list">
-          ${issueBlock('thin', `Thin content (<200 words): ${thinContent} pages (${cov.pct_thin_content || 0}%)`, thinContent > 0 ? '' : 'ok', thinContent, issues.thin_content_under_200_words?.urls)}
+          ${issueBlock('thin', `Thin content (&lt;200 words): ${thinContent} pages (${cov.pct_thin_content || 0}%)`, thinContent > 0 ? '' : 'ok', thinContent, issues.thin_content_under_200_words?.urls)}
           ${issueBlock('empty', `Empty pages: ${emptyPages}`, emptyPages > 0 ? 'critical' : 'ok', emptyPages, issues.empty_pages?.urls)}
           ${issueBlock('broken', `Broken images: ${brokenImg}`, brokenImg > 0 ? 'critical' : 'ok', brokenImg, issues.broken_images?.pages)}
           ${issueBlock('non200', `Non-200 status: ${non200} pages`, non200 > 0 ? 'critical' : 'ok', non200, issues.non_200_status?.pages)}
+        </ul>
+
+        <h2>Performance</h2>
+        <ul class="issue-list">
+          ${issueBlock('slowpages', `Slow pages (&gt;3s): ${slowPgs} pages`, slowPgs > 0 ? '' : 'ok', slowPgs, issues.slow_pages?.urls)}
+          ${issueBlock('avgload', `Average load time: ${avgLoad} ms`, avgLoad > 3000 ? '' : avgLoad > 1500 ? 'warn' : 'ok', 0, [])}
+          ${issueBlock('deeppages', `Deep pages (&gt;3 clicks from home): ${deepPgs} pages`, deepPgs > 0 ? '' : 'ok', deepPgs, issues.deep_pages?.urls)}
+          ${issueBlock('redirects', `Redirect pages: ${redirectPgs} pages`, redirectPgs > 0 ? '' : 'ok', redirectPgs, issues.redirect_pages?.urls)}
+          ${issueBlock('jsdep', `JS-dependent pages: ${jsDep} pages`, jsDep > 0 ? '' : 'ok', jsDep, issues.js_dependent_pages?.urls)}
+        </ul>
+
+        <h2>Open Graph &amp; Schema</h2>
+        <ul class="issue-list">
+          ${issueBlock('missingog', `Missing OG title or image: ${missingOg} pages`, missingOg > 0 ? '' : 'ok', missingOg, issues.missing_og?.urls)}
+          ${issueBlock('missingschema', `Missing structured data (Schema.org): ${missingSchema} pages`, missingSchema > 0 ? '' : 'ok', missingSchema, issues.missing_schema?.urls)}
+        </ul>
+
+        <h2>URL Quality</h2>
+        <ul class="issue-list">
+          ${issueBlock('urlissues', `URL issues (uppercase / underscores / too long): ${urlIssues} pages`, urlIssues > 0 ? '' : 'ok', urlIssues, issues.url_issues?.urls)}
         </ul>
 
         ${data.ai_summary ? `<h2>AI Summary</h2><div class="ai-summary">${data.ai_summary}</div>` : ''}
 
         <details>
           <summary>Page Details (${(data.page_details || []).length} pages)</summary>
+          <div class="table-filter-row">
+            <input type="text" id="tableSearch" placeholder="Filter URLs..." oninput="applyTableFilters()" />
+            <select id="tableFilter" onchange="applyTableFilters()">
+              <option value="">All pages</option>
+              <option value="indexable">Indexable</option>
+              <option value="not-indexable">Not indexable</option>
+              <option value="no-title">Missing title</option>
+              <option value="no-meta">Missing meta</option>
+              <option value="no-h1">Missing H1</option>
+              <option value="slow">Slow (&gt;3s)</option>
+              <option value="js-dependent">JS dependent</option>
+              <option value="redirect">Redirect</option>
+            </select>
+          </div>
           <table>
             <thead>
-              <tr><th>URL</th><th>Status</th><th>Indexable</th><th>Title</th><th>Meta</th><th>H1</th><th>No Alt</th><th>Words</th></tr>
+              <tr>
+                <th>URL</th><th>Status</th><th>Indexable</th><th>Title</th><th>Meta</th>
+                <th>H1</th><th>No Alt</th><th>Words</th><th>Load (ms)</th><th>Depth</th>
+                <th>OG</th><th>Schema</th><th>Redirect</th>
+              </tr>
             </thead>
-            <tbody>${pageRows}</tbody>
+            <tbody id="pageDetailsBody">${pageRows}</tbody>
           </table>
         </details>
       `;

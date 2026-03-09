@@ -42,7 +42,7 @@ async def run_analysis(job_id: str, url: str, max_pages: int, exclude_patterns: 
             jobs[job_id]["progress"] = crawled
 
         crawler = SiteCrawler(url, max_pages=max_pages, on_progress=on_progress, exclude_patterns=exclude_patterns)
-        pages = await crawler.crawl()
+        pages, meta_files = await crawler.crawl()
         jobs[job_id]["total"] = len(pages)
         jobs[job_id]["progress"] = len(pages)
 
@@ -53,7 +53,10 @@ async def run_analysis(job_id: str, url: str, max_pages: int, exclude_patterns: 
         # 3. Aggregate
         aggregated = aggregate_reports(page_reports)
 
-        # 4. AI summary (optional — uses Groq or Gemini if key is set)
+        # 4. Attach meta files (robots.txt / sitemap)
+        aggregated["meta_files"] = meta_files
+
+        # 5. AI summary (optional — uses Groq or Gemini if key is set)
         aggregated["ai_summary"] = await generate_ai_summary(url, aggregated)
         aggregated["target_url"] = url
 

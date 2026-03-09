@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:www.screamingfrog.co.uk)",
+      "Bash(python -c \":*)"
+    ]
+  }
+}

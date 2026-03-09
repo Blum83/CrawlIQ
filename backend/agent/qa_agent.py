@@ -185,10 +185,10 @@ def deterministic_summary(url: str, aggregated: dict) -> str:
 
 # ─── Main entry point ──────────────────────────────────────────────────────────
 
-async def generate_ai_summary(url: str, aggregated: dict) -> str:
+async def generate_ai_summary(url: str, aggregated: dict) -> str | None:
     provider = get_provider()
     if not provider:
-        return deterministic_summary(url, aggregated)
+        return None
 
     prompt = build_prompt(url, aggregated)
     try:
