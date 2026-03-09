@@ -1,45 +1,54 @@
 # AI QA Agent
 
-Automated website quality analysis powered by AI (Claude). Crawls any website and generates a structured QA report covering SEO, accessibility, content quality, and more.
+Automated website quality analysis. Crawls any website and generates a structured QA report covering SEO, accessibility, content quality, and technical issues — with optional AI summary.
 
 ## Features
 
-- **Crawler** — Playwright-based headless browser crawl (respects domain boundaries)
-- **Analyzer** — Checks meta descriptions, H1 tags, broken images, alt tags, word count, HTTP status codes
-- **AI Summary** — Claude generates an actionable QA report from the raw data
-- **Frontend** — Clean dark-mode UI with live progress tracking
+- **Crawler** — Playwright headless browser, up to 200 pages, real-time progress
+- **Analyzer** — SEO, accessibility, content, and technical checks (see full list below)
+- **AI Summary** — Groq (Llama3) or Gemini generates an actionable summary; deterministic fallback if no key set
+- **Export** — Download report as HTML, Excel (multi-sheet), or CSV
+- **Frontend** — Dark-mode UI with live progress bar
+- **Telegram Bot** — Send a URL, get a full report with progress updates
+
+## Checks
+
+| Category | Checks |
+|----------|--------|
+| SEO | Missing title, missing meta description, missing H1, multiple H1, missing canonical, duplicate titles |
+| Accessibility | Missing HTML lang, images without alt text, buttons without accessible label |
+| Content | Thin content (<200 words), empty pages, avg word count |
+| Technical | Broken images, non-200 status pages, error pages |
 
 ## Quick Start (local)
 
 ```bash
 cd backend
 
-# Create virtual environment
 python -m venv venv
 source venv/bin/activate  # Windows: venv\Scripts\activate
 
-# Install dependencies
 pip install -r requirements.txt
 playwright install chromium
 
-# Set API key
 cp .env.example .env
-# Edit .env and add your ANTHROPIC_API_KEY
+# Edit .env — add GROQ_API_KEY or GEMINI_API_KEY (optional)
+# Add TELEGRAM_BOT_TOKEN (optional)
 
-# Run
 python main.py
 ```
 
 Open http://localhost:8000
 
-## Quick Start (Docker)
+## Environment Variables
 
-```bash
-cp backend/.env.example .env
-# Add ANTHROPIC_API_KEY to .env
-
-docker-compose up --build
-```
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `GROQ_API_KEY` | No | Groq API key for Llama3 AI summary (free tier at console.groq.com) |
+| `GEMINI_API_KEY` | No | Gemini API key fallback |
+| `TELEGRAM_BOT_TOKEN` | No | Telegram bot token |
+| `QA_API_BASE` | No | Internal API URL for bot (default: `http://localhost:$PORT/api`) |
+| `PORT` | No | Server port (default: 8000) |
 
 ## API
 
@@ -47,38 +56,36 @@ docker-compose up --build
 |--------|----------|-------------|
 | POST | `/api/analyze` | Start analysis job |
 | GET | `/api/status/{job_id}` | Poll job status & result |
+| GET | `/api/export/{job_id}/html` | Download HTML report |
+| GET | `/api/export/{job_id}/excel` | Download Excel report (multi-sheet) |
+| GET | `/api/export/{job_id}/csv` | Download CSV (page details) |
 | GET | `/api/health` | Health check |
 
 ### POST /api/analyze
 
 ```json
-{
-  "url": "https://example.com",
-  "max_pages": 30
-}
+{ "url": "https://example.com", "max_pages": 200 }
 ```
 
 ### Response (when done)
 
 ```json
 {
-  "job_id": "...",
   "status": "done",
   "result": {
-    "total_pages": 42,
-    "pages_crawled": 40,
-    "error_pages": 2,
+    "pages_crawled": 80,
     "issues": {
       "missing_meta_description": {"count": 12, "urls": [...]},
       "missing_h1": {"count": 3, "urls": [...]},
-      "broken_images": {"count": 2, "pages": [...]},
-      "missing_alt_tags": {"count": 8, "pages": [...]},
-      "thin_content_under_200_words": {"count": 13, "urls": [...]}
+      "missing_canonical": {"count": 53, "urls": [...]},
+      "duplicate_titles": {"count": 8, "urls": [...]},
+      "missing_html_lang": {"count": 0, "urls": []},
+      "missing_alt_tags": {"count": 230, "pages": [...]},
+      "buttons_missing_label": {"count": 12, "pages": [...]},
+      "thin_content_under_200_words": {"count": 7, "urls": [...]},
+      "non_200_status": {"count": 1, "pages": [{"url": "...", "status": 404}]}
     },
-    "content_coverage": {
-      "avg_word_count": 340,
-      "pct_thin_content": 30.0
-    },
+    "content_coverage": {"avg_word_count": 950, "pct_thin_content": 8.8},
     "ai_summary": "...",
     "page_details": [...]
   }
@@ -88,17 +95,17 @@ docker-compose up --build
 ## Architecture
 
 ```
-Frontend (HTML/JS)
-      |
-FastAPI (async REST)
-      |
-SiteCrawler (Playwright)
-      |
-PageAnalyzer (BeautifulSoup)
-      |
-AI Agent (Claude claude-sonnet-4-6)
-      |
-JSON Report
+Frontend (HTML/JS)  ←→  Telegram Bot
+         \               /
+          FastAPI (async REST)
+               |
+        SiteCrawler (Playwright)
+               |
+        PageAnalyzer (BeautifulSoup)
+               |
+        AI Agent (Groq → Gemini → fallback)
+               |
+        Exporter (HTML / Excel / CSV)
 ```
 
 ## Stack
@@ -106,5 +113,7 @@ JSON Report
 - **Python 3.12** + **FastAPI** — async API with background jobs
 - **Playwright** — headless Chromium crawling
 - **BeautifulSoup4** — HTML parsing
-- **Anthropic SDK** — Claude AI summaries
-- **Docker** — containerized deployment
+- **Groq / Gemini** — optional AI summaries
+- **openpyxl** — Excel export
+- **python-telegram-bot** (httpx polling) — Telegram bot
+- **Docker** — containerized deployment on Railway
