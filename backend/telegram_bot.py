@@ -145,10 +145,15 @@ def format_report(url: str, result: dict) -> str:
     meta_urls = url_list("missing_meta_description")
     h1_urls   = url_list("missing_h1")
 
+    non200_pages = issues.get("non_200_status", {}).get("pages", [])[:5]
+    non200_items = [f"  `{p.get('url', '')}` — *{p.get('status', '?')}*" for p in non200_pages]
+
     if meta_urls:
         lines += ["", "📝 *Pages without meta description:*"] + meta_urls
     if h1_urls:
         lines += ["", "📝 *Pages without H1:*"] + h1_urls
+    if non200_items:
+        lines += ["", "🚫 *Non-200 pages:*"] + non200_items
 
     ai_summary = result.get("ai_summary", "")
     if ai_summary:
