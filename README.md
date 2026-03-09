@@ -1,5 +1,7 @@
 # CrawlIQ — AI Website Auditor
 
+**Telegram Bot:** [@aiqa_agent_bot](https://t.me/aiqa_agent_bot)
+
 AI-powered website audit tool. Crawls any site and generates a structured report covering SEO, accessibility, content quality, performance, and technical issues — with optional AI summary.
 
 ## Features
