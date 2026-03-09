@@ -726,6 +726,7 @@
             case 'slow':          matchFilter = row.dataset.slow === 'true'; break;
             case 'js-dependent':  matchFilter = row.dataset.jsDep === 'true'; break;
             case 'redirect':      matchFilter = row.dataset.redirect === 'true'; break;
+            case 'non-200':       matchFilter = row.dataset.status !== '200'; break;
           }
         }
         row.style.display = (matchSearch && matchFilter) ? '' : 'none';
@@ -813,6 +814,7 @@
             data-slow="${p.load_time_ms > 3000}"
             data-js-dep="${p.js_dependent || false}"
             data-redirect="${p.is_redirect || false}"
+            data-status="${p.status_code || 0}"
           >
             <td title="${p.url}">${p.url}</td>
             <td><span class="badge ${p.status_code === 200 ? 'badge-green' : 'badge-red'}">${p.status_code || 'ERR'}</span></td>
@@ -941,6 +943,7 @@
               <option value="slow">Slow (&gt;3s)</option>
               <option value="js-dependent">JS dependent</option>
               <option value="redirect">Redirect</option>
+              <option value="non-200">Non-200 status</option>
             </select>
           </div>
           <table>
