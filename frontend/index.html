@@ -341,7 +341,7 @@
         const res = await fetch('/api/analyze', {
           method: 'POST',
           headers: {'Content-Type': 'application/json'},
-          body: JSON.stringify({url, max_pages: 100}),
+          body: JSON.stringify({url, max_pages: 200}),
         });
         const job = await res.json();
         if (!res.ok) throw new Error(job.detail || 'Failed to start');
