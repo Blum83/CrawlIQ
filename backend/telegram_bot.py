@@ -91,22 +91,32 @@ def format_report(url: str, result: dict) -> str:
     issues = result.get("issues", {})
     cov = result.get("content_coverage", {})
 
-    meta   = issues.get("missing_meta_description", {}).get("count", 0)
-    h1     = issues.get("missing_h1", {}).get("count", 0)
-    broken = issues.get("broken_images", {}).get("count", 0)
-    alt    = issues.get("missing_alt_tags", {}).get("count", 0)
-    thin   = issues.get("thin_content_under_200_words", {}).get("count", 0)
-    non200 = issues.get("non_200_status", {}).get("count", 0)
-    errors = result.get("error_pages", 0)
+    def cnt(key):
+        return issues.get(key, {}).get("count", 0)
 
-    total_issues = meta + h1 + broken + alt + thin + non200
+    # counts
+    missing_title  = cnt("missing_title")
+    meta           = cnt("missing_meta_description")
+    h1             = cnt("missing_h1")
+    multi_h1       = cnt("multiple_h1")
+    canonical      = cnt("missing_canonical")
+    dup_titles     = cnt("duplicate_titles")
+    lang           = cnt("missing_html_lang")
+    alt            = cnt("missing_alt_tags")
+    buttons        = cnt("buttons_missing_label")
+    broken         = cnt("broken_images")
+    thin           = cnt("thin_content_under_200_words")
+    empty          = cnt("empty_pages")
+    non200         = cnt("non_200_status")
+    errors         = result.get("error_pages", 0)
+
+    total_issues = missing_title + meta + h1 + multi_h1 + canonical + dup_titles + lang + alt + buttons + broken + thin + empty + non200
 
     def fmt(val, warn=1, crit=5):
         if val == 0:   return f"✅ `{val}`"
         if val < crit: return f"⚠️ `{val}`"
         return f"🔴 `{val}`"
 
-    # Overall health score (simple)
     pages = result.get("pages_crawled", 1) or 1
     score = max(0, 100 - int(total_issues / pages * 100))
     if score >= 80:   health = f"🟢 Good ({score}/100)"
@@ -123,37 +133,47 @@ def format_report(url: str, result: dict) -> str:
         f"• Thin content pages: `{thin}` ({cov.get('pct_thin_content', 0)}%)",
         f"• Overall health: {health}",
         f"",
-        f"🐛 *Issues Found* — total: `{total_issues}`",
-        f"• Meta description missing:  {fmt(meta)}  pages",
-        f"• H1 tag missing:            {fmt(h1)}  pages",
-        f"• Broken images:             {fmt(broken, 1, 10)}",
-        f"• Images without alt text:   {fmt(alt, 1, 10)}",
-        f"• Non-200 status pages:      {fmt(non200)}",
+        f"🐛 *Issues* — total: `{total_issues}`",
+        f"",
+        f"*SEO*",
+        f"• Title missing:         {fmt(missing_title)}",
+        f"• Meta desc missing:     {fmt(meta)}  pages",
+        f"• H1 missing:            {fmt(h1)}  pages",
+        f"• Multiple H1:           {fmt(multi_h1)}",
+        f"• Canonical missing:     {fmt(canonical, 5, 20)}",
+        f"• Duplicate titles:      {fmt(dup_titles)}",
+        f"",
+        f"*Accessibility*",
+        f"• HTML lang missing:     {fmt(lang, 1, 3)}",
+        f"• Images without alt:    {fmt(alt, 1, 10)}",
+        f"• Buttons w/o label:     {fmt(buttons)}",
+        f"",
+        f"*Content & Technical*",
+        f"• Thin content pages:    {fmt(thin, 3, 10)}",
+        f"• Empty pages:           {fmt(empty)}",
+        f"• Broken images:         {fmt(broken, 1, 10)}",
+        f"• Non-200 pages:         {fmt(non200)}",
     ]
 
-    # Top affected URLs for critical issues
     def url_list(key, sub="urls"):
         urls = issues.get(key, {}).get(sub, [])[:10]
         if not urls:
             return []
-        items = []
-        for u in urls:
-            u_str = u.get("url", u) if isinstance(u, dict) else u
-            items.append(f"  `{u_str}`")
-        return items
-
-    meta_urls = url_list("missing_meta_description")
-    h1_urls   = url_list("missing_h1")
+        return [f"  `{u.get('url', u) if isinstance(u, dict) else u}`" for u in urls]
 
     non200_pages = issues.get("non_200_status", {}).get("pages", [])[:10]
     non200_items = [f"  `{p.get('url', '')}` — *{p.get('status', '?')}*" for p in non200_pages]
 
-    if meta_urls:
-        lines += ["", "📝 *Pages without meta description:*"] + meta_urls
-    if h1_urls:
-        lines += ["", "📝 *Pages without H1:*"] + h1_urls
-    if non200_items:
-        lines += ["", "🚫 *Non-200 pages:*"] + non200_items
+    for label, items in [
+        ("📝 *Pages without title:*",            url_list("missing_title")),
+        ("📝 *Pages without meta description:*", url_list("missing_meta_description")),
+        ("📝 *Pages without H1:*",               url_list("missing_h1")),
+        ("📝 *Pages with multiple H1:*",         url_list("multiple_h1")),
+        ("📝 *Duplicate titles:*",               url_list("duplicate_titles")),
+        ("🚫 *Non-200 pages:*",                  non200_items),
+    ]:
+        if items:
+            lines += ["", label] + items
 
     ai_summary = result.get("ai_summary", "")
     if ai_summary:

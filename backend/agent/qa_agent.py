@@ -1,106 +1,201 @@
+"""
+AI summary providers with automatic fallback.
+
+Priority: Groq (free, fast) → Gemini → deterministic fallback
+Set one of:
+  GROQ_API_KEY   — https://console.groq.com  (free tier, Llama3)
+  GEMINI_API_KEY — https://aistudio.google.com (free tier)
+"""
+
 import os
 import asyncio
 import httpx
+from abc import ABC, abstractmethod
 
-# Gemini models to try in order (fallback to lighter model on 429)
-GEMINI_MODELS = [
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
-]
 
+# ─── Base ──────────────────────────────────────────────────────────────────────
+
+class AIProvider(ABC):
+    @abstractmethod
+    async def summarize(self, prompt: str) -> str: ...
+
+    @property
+    @abstractmethod
+    def name(self) -> str: ...
+
+
+# ─── Groq (free, Llama3) ───────────────────────────────────────────────────────
+
+class GroqProvider(AIProvider):
+    name = "Groq/Llama3"
+    MODELS = ["llama-3.3-70b-versatile", "llama3-8b-8192"]
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+
+    async def summarize(self, prompt: str) -> str:
+        for model in self.MODELS:
+            try:
+                return await self._call(prompt, model)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 429:
+                    await asyncio.sleep(10)
+                    try:
+                        return await self._call(prompt, model)
+                    except Exception:
+                        continue
+                elif e.response.status_code in (400, 404):
+                    continue
+                raise
+        raise RuntimeError("All Groq models failed")
+
+    async def _call(self, prompt: str, model: str) -> str:
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {self.api_key}"},
+                json={
+                    "model": model,
+                    "messages": [{"role": "user", "content": prompt}],
+                    "max_tokens": 1024,
+                },
+            )
+            r.raise_for_status()
+            return r.json()["choices"][0]["message"]["content"]
+
+
+# ─── Gemini ────────────────────────────────────────────────────────────────────
+
+class GeminiProvider(AIProvider):
+    name = "Gemini"
+    MODELS = ["gemini-2.0-flash", "gemini-2.0-flash-lite"]
+
+    def __init__(self, api_key: str):
+        self.api_key = api_key
+
+    async def summarize(self, prompt: str) -> str:
+        for model in self.MODELS:
+            try:
+                return await self._call(prompt, model)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 429:
+                    await asyncio.sleep(15)
+                    try:
+                        return await self._call(prompt, model)
+                    except Exception:
+                        continue
+                elif e.response.status_code in (400, 404):
+                    continue
+                raise
+        raise RuntimeError("All Gemini models failed")
+
+    async def _call(self, prompt: str, model: str) -> str:
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={self.api_key}"
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.post(url, json={"contents": [{"parts": [{"text": prompt}]}]})
+            r.raise_for_status()
+            return r.json()["candidates"][0]["content"]["parts"][0]["text"]
+
+
+# ─── Auto-select provider ──────────────────────────────────────────────────────
+
+def get_provider() -> AIProvider | None:
+    if key := os.getenv("GROQ_API_KEY"):
+        return GroqProvider(key)
+    if key := os.getenv("GEMINI_API_KEY"):
+        return GeminiProvider(key)
+    return None
+
+
+# ─── Prompt ────────────────────────────────────────────────────────────────────
 
 def build_prompt(url: str, aggregated: dict) -> str:
     issues = aggregated.get("issues", {})
     coverage = aggregated.get("content_coverage", {})
 
-    return f"""You are a professional QA engineer. Analyze the following website audit data and generate a concise, actionable QA report.
+    def cnt(key):
+        return issues.get(key, {}).get("count", 0)
+
+    return f"""You are a professional QA engineer. Analyze the following website audit data and write a concise, actionable summary.
 
 Website: {url}
-Pages crawled: {aggregated.get('pages_crawled', 0)} / {aggregated.get('total_pages', 0)}
+Pages crawled: {aggregated.get('pages_crawled', 0)}
 
-Raw audit data:
-- Missing meta descriptions: {issues.get('missing_meta_description', {}).get('count', 0)} pages
-- Missing H1 tags: {issues.get('missing_h1', {}).get('count', 0)} pages
-- Broken images: {issues.get('broken_images', {}).get('count', 0)}
-- Missing alt tags on images: {issues.get('missing_alt_tags', {}).get('count', 0)} images across {len(issues.get('missing_alt_tags', {}).get('pages', []))} pages
-- Thin content (<200 words): {issues.get('thin_content_under_200_words', {}).get('count', 0)} pages ({coverage.get('pct_thin_content', 0)}%)
-- Non-200 status codes: {issues.get('non_200_status', {}).get('count', 0)} pages
-- Error pages (failed to load): {aggregated.get('error_pages', 0)}
-- Average word count: {coverage.get('avg_word_count', 0)} words/page
+SEO issues:
+- Missing title: {cnt('missing_title')} pages
+- Missing meta description: {cnt('missing_meta_description')} pages
+- Missing H1: {cnt('missing_h1')} pages
+- Multiple H1: {cnt('multiple_h1')} pages
+- Missing canonical: {cnt('missing_canonical')} pages
+- Duplicate titles: {cnt('duplicate_titles')} pages
 
-Generate a structured QA report with:
-1. Executive Summary (2-3 sentences overall assessment)
-2. Critical Issues (must fix)
-3. Warnings (should fix)
-4. Accessibility summary
-5. Content quality summary
-6. Top 3 recommendations
+Accessibility:
+- Missing html lang: {cnt('missing_html_lang')} pages
+- Images missing alt text: {cnt('missing_alt_tags')} images
+- Buttons without label: {cnt('buttons_missing_label')}
 
-Be direct and professional. Use bullet points. Focus on actionable insights."""
+Content:
+- Thin content (<200 words): {cnt('thin_content_under_200_words')} pages
+- Empty pages: {cnt('empty_pages')}
+- Avg word count: {coverage.get('avg_word_count', 0)} words/page
+
+Technical:
+- Broken images: {cnt('broken_images')}
+- Non-200 pages: {cnt('non_200_status')}
+
+Write 3-5 sentences: overall assessment, top 2-3 critical issues, and one actionable recommendation. Be direct and professional."""
 
 
-async def _call_gemini(prompt: str, api_key: str, model: str) -> str:
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-    payload = {"contents": [{"parts": [{"text": prompt}]}]}
-    async with httpx.AsyncClient(timeout=60) as client:
-        r = await client.post(url, json=payload)
-        r.raise_for_status()
-        data = r.json()
-        return data["candidates"][0]["content"]["parts"][0]["text"]
+# ─── Deterministic fallback ────────────────────────────────────────────────────
 
+def deterministic_summary(url: str, aggregated: dict) -> str:
+    issues = aggregated.get("issues", {})
+
+    ranked = sorted(
+        [
+            (issues.get(k, {}).get("count", 0), label)
+            for k, label in [
+                ("missing_meta_description", "Missing meta description"),
+                ("missing_title",            "Missing page title"),
+                ("missing_h1",               "Missing H1 tag"),
+                ("multiple_h1",              "Multiple H1 tags"),
+                ("missing_canonical",        "Missing canonical link"),
+                ("duplicate_titles",         "Duplicate page titles"),
+                ("missing_html_lang",        "Missing HTML lang attribute"),
+                ("missing_alt_tags",         "Images without alt text"),
+                ("buttons_missing_label",    "Buttons without accessible label"),
+                ("thin_content_under_200_words", "Thin content pages"),
+                ("empty_pages",             "Empty pages"),
+                ("broken_images",           "Broken images"),
+                ("non_200_status",          "Non-200 status pages"),
+            ]
+        ],
+        reverse=True,
+    )
+
+    top = [(cnt, label) for cnt, label in ranked if cnt > 0][:3]
+    if not top:
+        return "No significant issues detected."
+
+    lines = ["Top issues detected:"]
+    for i, (cnt, label) in enumerate(top, 1):
+        lines.append(f"{i}. {label} ({cnt})")
+    return "\n".join(lines)
+
+
+# ─── Main entry point ──────────────────────────────────────────────────────────
 
 async def generate_ai_summary(url: str, aggregated: dict) -> str:
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        return _fallback_summary(url, aggregated)
+    provider = get_provider()
+    if not provider:
+        return deterministic_summary(url, aggregated)
 
     prompt = build_prompt(url, aggregated)
-    last_error = None
-
-    for model in GEMINI_MODELS:
-        try:
-            print(f"[AI Agent] Trying {model}...")
-            result = await _call_gemini(prompt, api_key, model)
-            print(f"[AI Agent] Success with {model}")
-            return result
-        except httpx.HTTPStatusError as e:
-            last_error = str(e)
-            print(f"[AI Agent] {model} failed: {e.response.status_code}")
-            if e.response.status_code == 429:
-                # Rate limited — wait and retry same model once, then try next
-                print(f"[AI Agent] {model} rate limited, waiting 15s...")
-                await asyncio.sleep(15)
-                try:
-                    return await _call_gemini(prompt, api_key, model)
-                except Exception:
-                    continue
-            elif e.response.status_code in (400, 404):
-                # Bad model name or request — try next
-                continue
-            else:
-                break
-        except Exception as e:
-            last_error = str(e)
-            print(f"[AI Agent] {model} error: {e}")
-            break
-
-    return f"AI summary unavailable: {last_error}\n\n" + _fallback_summary(url, aggregated)
-
-
-def _fallback_summary(url: str, aggregated: dict) -> str:
-    issues = aggregated.get("issues", {})
-    coverage = aggregated.get("content_coverage", {})
-    lines = [
-        f"## QA Report for {url}",
-        f"",
-        f"**Pages crawled:** {aggregated.get('pages_crawled', 0)}",
-        f"",
-        f"### Issues Found",
-        f"- Missing meta description: {issues.get('missing_meta_description', {}).get('count', 0)} pages",
-        f"- Missing H1: {issues.get('missing_h1', {}).get('count', 0)} pages",
-        f"- Broken images: {issues.get('broken_images', {}).get('count', 0)}",
-        f"- Missing alt tags: {issues.get('missing_alt_tags', {}).get('count', 0)} images",
-        f"- Thin content: {issues.get('thin_content_under_200_words', {}).get('count', 0)} pages ({coverage.get('pct_thin_content', 0)}%)",
-        f"- Non-200 pages: {issues.get('non_200_status', {}).get('count', 0)}",
-    ]
-    return "\n".join(lines)
+    try:
+        print(f"[AI] Using {provider.name}...")
+        result = await provider.summarize(prompt)
+        print(f"[AI] {provider.name} succeeded")
+        return result
+    except Exception as e:
+        print(f"[AI] {provider.name} failed: {e}")
+        return deterministic_summary(url, aggregated)
