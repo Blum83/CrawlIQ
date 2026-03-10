@@ -218,6 +218,54 @@ async def cancel_job(job_id: str):
     return {"job_id": job_id, "status": jobs[job_id]["status"]}
 
 
+@router.get("/export/{job_id}/robots")
+async def export_robots(job_id: str):
+    if job_id not in jobs or jobs[job_id]["status"] != "done":
+        raise HTTPException(status_code=404, detail="Report not ready")
+    meta = jobs[job_id]["result"].get("meta_files", {})
+    content = meta.get("robots_txt_content", "")
+    if not content:
+        raise HTTPException(status_code=404, detail="robots.txt not found for this site")
+    return Response(
+        content=content.encode("utf-8"),
+        media_type="text/plain",
+        headers={"Content-Disposition": 'attachment; filename="robots.txt"'},
+    )
+
+
+@router.get("/export/{job_id}/sitemap")
+async def export_sitemap(job_id: str):
+    if job_id not in jobs or jobs[job_id]["status"] != "done":
+        raise HTTPException(status_code=404, detail="Report not ready")
+    meta = jobs[job_id]["result"].get("meta_files", {})
+    raw_files: list = meta.get("sitemap_raw_files", [])
+    if not raw_files:
+        raise HTTPException(status_code=404, detail="sitemap not found for this site")
+
+    if len(raw_files) == 1:
+        # Single sitemap — return as-is
+        _url, xml_text = raw_files[0]
+        return Response(
+            content=xml_text.encode("utf-8"),
+            media_type="application/xml",
+            headers={"Content-Disposition": 'attachment; filename="sitemap.xml"'},
+        )
+
+    # Multiple sitemaps — zip them
+    import io, zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for i, (sm_url, xml_text) in enumerate(raw_files):
+            from urllib.parse import urlparse as _up
+            name = _up(sm_url).path.lstrip("/").replace("/", "_") or f"sitemap_{i}.xml"
+            zf.writestr(name, xml_text.encode("utf-8"))
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": 'attachment; filename="sitemaps.zip"'},
+    )
+
+
 @router.get("/health")
 async def health():
     return {"status": "ok"}

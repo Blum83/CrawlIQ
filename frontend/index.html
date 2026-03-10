@@ -137,9 +137,9 @@
     .stat-box.ok .value { color: #22c55e; }
 
     .section-header {
-      display: flex;
+      display: inline-flex;
       align-items: center;
-      justify-content: space-between;
+      gap: 6px;
       cursor: pointer;
       user-select: none;
       margin-bottom: 12px;
@@ -396,6 +396,22 @@
     .tech-bad { color: #ef4444; font-weight: 700; }
     .tech-label { color: #94a3b8; }
     .tech-detail { color: #64748b; font-size: 0.8rem; }
+
+    .meta-dl-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      font-size: 0.75rem;
+      color: #7c3aed;
+      border: 1px solid #3d2d6d;
+      border-radius: 6px;
+      padding: 2px 8px;
+      text-decoration: none;
+      transition: background 0.15s, color 0.15s;
+      margin-left: 4px;
+    }
+
+    .meta-dl-btn:hover { background: #2d1f5e; color: #c4b5fd; }
 
     /* Modal */
     .modal-backdrop {
@@ -701,7 +717,7 @@
             document.getElementById('progressBar').style.width = '100%';
             setStatus('Analysis complete!');
             setTimeout(() => showProgress(false), 600);
-            renderReport(job.result);
+            renderReport(job.result, jobId);
             showExportButtons(jobId);
             document.getElementById('analyzeBtn').disabled = false;
           } else if (job.status === 'cancelled') {
@@ -839,7 +855,7 @@
 
     // ── Main render ───────────────────────────────────────────────────────────
 
-    function renderReport(data) {
+    function renderReport(data, jobId) {
       const issues = data.issues || {};
       const cov = data.content_coverage || {};
       const idx = data.indexability || {};
@@ -941,7 +957,7 @@
         ? `<span class="tech-ok">&#10003; found</span>${meta.robots_disallows?.length ? `<span class="tech-detail">(${meta.robots_disallows.length} disallow rules)</span>` : ''}`
         : `<span class="tech-bad">&#10007; not found</span>`;
       const sitemapInfo = meta.sitemap_exists
-        ? `<span class="tech-ok">&#10003; found</span>${meta.sitemap_urls?.length ? `<span class="tech-detail">(${meta.sitemap_urls.length} sample URLs)</span>` : ''}`
+        ? `<span class="tech-ok">&#10003; found</span>${meta.sitemap_all_urls?.length ? `<span class="tech-detail">(${meta.sitemap_all_urls.length} URLs)</span>` : ''}`
         : `<span class="tech-bad">&#10007; not found</span>`;
 
       const indexablePct = data.pages_crawled > 0
@@ -991,9 +1007,11 @@
           <div class="tech-setup">
             <div class="tech-setup-item">
               <span class="tech-label">robots.txt:</span> ${robotsTxt}
+              ${meta.robots_txt_exists ? `<a class="meta-dl-btn" href="/api/export/${jobId}/robots" download="robots.txt">&#8595; download</a>` : ''}
             </div>
             <div class="tech-setup-item">
               <span class="tech-label">sitemap.xml:</span> ${sitemapInfo}
+              ${meta.sitemap_exists ? `<a class="meta-dl-btn" href="/api/export/${jobId}/sitemap" download>&#8595; download</a>` : ''}
             </div>
           </div>
         </div>

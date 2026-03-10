@@ -289,7 +289,7 @@ def aggregate_reports(page_reports: list[PageReport]) -> dict:
         "total_pages": total,
         "pages_crawled": total,
         "indexable_pages": len(indexable),
-        "non_indexable_pages": len(non_indexable),
+        "non_indexable_pages": total - len(indexable),
         "error_pages": len(error_pages),
         "indexability": {
             "noindex": {

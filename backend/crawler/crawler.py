@@ -44,14 +44,17 @@ class SiteCrawler:
         parsed = urlparse(url)
         return f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/")
 
-    async def _parse_sitemap(self, client, sitemap_url: str, depth: int = 0) -> list[str]:
-        """Recursively collect all page URLs from a sitemap or sitemap index."""
+    async def _parse_sitemap(self, client, sitemap_url: str, depth: int = 0, _raw_store: list | None = None) -> list[str]:
+        """Recursively collect all page URLs from a sitemap or sitemap index.
+        _raw_store: if provided, appends (url, raw_text) tuples for each fetched sitemap."""
         if depth > 3:
             return []
         try:
             r = await client.get(sitemap_url, timeout=15)
             if r.status_code != 200:
                 return []
+            if _raw_store is not None:
+                _raw_store.append((sitemap_url, r.text))
             root = ET.fromstring(r.text)
             ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
 
@@ -60,7 +63,7 @@ class SiteCrawler:
             if child_sitemaps:
                 all_urls: list[str] = []
                 for loc in child_sitemaps[:20]:  # cap at 20 child sitemaps
-                    child_urls = await self._parse_sitemap(client, loc.text.strip(), depth + 1)
+                    child_urls = await self._parse_sitemap(client, loc.text.strip(), depth + 1, _raw_store)
                     all_urls.extend(child_urls)
                 return all_urls
 
@@ -94,6 +97,7 @@ class SiteCrawler:
                     r = await client.get(f"{base}/robots.txt")
                     if r.status_code == 200 and "text" in r.headers.get("content-type", "text"):
                         result["robots_txt_exists"] = True
+                        result["robots_txt_content"] = r.text
                         disallows = []
                         sitemap_from_robots: list[str] = []
                         for line in r.text.splitlines():
@@ -114,11 +118,14 @@ class SiteCrawler:
                 # sitemap.xml — try /sitemap.xml, then any hints from robots.txt
                 sitemap_candidates = [f"{base}/sitemap.xml"] + result.pop("_sitemap_hints", [])
                 all_sitemap_urls: list[str] = []
+                sitemap_raw_files: list[tuple[str, str]] = []
                 for candidate in sitemap_candidates:
-                    urls = await self._parse_sitemap(client, candidate)
+                    urls = await self._parse_sitemap(client, candidate, _raw_store=sitemap_raw_files)
                     if urls:
                         result["sitemap_exists"] = True
                         all_sitemap_urls.extend(urls)
+
+                result["sitemap_raw_files"] = sitemap_raw_files  # list of (url, xml_text)
 
                 # Deduplicate
                 seen: set[str] = set()
