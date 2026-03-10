@@ -44,6 +44,31 @@ class SiteCrawler:
         parsed = urlparse(url)
         return f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/")
 
+    async def _parse_sitemap(self, client, sitemap_url: str, depth: int = 0) -> list[str]:
+        """Recursively collect all page URLs from a sitemap or sitemap index."""
+        if depth > 3:
+            return []
+        try:
+            r = await client.get(sitemap_url, timeout=15)
+            if r.status_code != 200:
+                return []
+            root = ET.fromstring(r.text)
+            ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+
+            # Sitemap index — recurse into child sitemaps
+            child_sitemaps = root.findall(".//sm:sitemap/sm:loc", ns)
+            if child_sitemaps:
+                all_urls: list[str] = []
+                for loc in child_sitemaps[:20]:  # cap at 20 child sitemaps
+                    child_urls = await self._parse_sitemap(client, loc.text.strip(), depth + 1)
+                    all_urls.extend(child_urls)
+                return all_urls
+
+            # Regular sitemap — return page URLs
+            return [loc.text.strip() for loc in root.findall(".//sm:loc", ns) if loc.text]
+        except Exception:
+            return []
+
     async def fetch_meta_files(self) -> dict:
         """Fetch robots.txt and sitemap.xml from the base domain."""
         parsed = urlparse(self.base_url)
@@ -52,6 +77,7 @@ class SiteCrawler:
             "robots_txt_exists": False,
             "sitemap_exists": False,
             "sitemap_urls": [],
+            "sitemap_all_urls": [],
             "robots_disallows": [],
         }
         if not _HTTPX_AVAILABLE:
@@ -69,30 +95,41 @@ class SiteCrawler:
                     if r.status_code == 200 and "text" in r.headers.get("content-type", "text"):
                         result["robots_txt_exists"] = True
                         disallows = []
+                        sitemap_from_robots: list[str] = []
                         for line in r.text.splitlines():
                             line = line.strip()
                             if line.lower().startswith("disallow:"):
                                 val = line[len("disallow:"):].strip()
                                 if val:
                                     disallows.append(val)
+                            elif line.lower().startswith("sitemap:"):
+                                val = line[len("sitemap:"):].strip()
+                                if val:
+                                    sitemap_from_robots.append(val)
                         result["robots_disallows"] = disallows
+                        result["_sitemap_hints"] = sitemap_from_robots
                 except Exception:
                     pass
 
-                # sitemap.xml
-                try:
-                    r = await client.get(f"{base}/sitemap.xml")
-                    if r.status_code == 200:
+                # sitemap.xml — try /sitemap.xml, then any hints from robots.txt
+                sitemap_candidates = [f"{base}/sitemap.xml"] + result.pop("_sitemap_hints", [])
+                all_sitemap_urls: list[str] = []
+                for candidate in sitemap_candidates:
+                    urls = await self._parse_sitemap(client, candidate)
+                    if urls:
                         result["sitemap_exists"] = True
-                        try:
-                            root = ET.fromstring(r.text)
-                            ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
-                            urls = [loc.text.strip() for loc in root.findall(".//sm:loc", ns) if loc.text]
-                            result["sitemap_urls"] = urls[:5]
-                        except Exception:
-                            pass
-                except Exception:
-                    pass
+                        all_sitemap_urls.extend(urls)
+
+                # Deduplicate
+                seen: set[str] = set()
+                unique: list[str] = []
+                for u in all_sitemap_urls:
+                    if u not in seen:
+                        seen.add(u)
+                        unique.append(u)
+
+                result["sitemap_all_urls"] = unique
+                result["sitemap_urls"] = unique[:5]  # display only
         except Exception:
             pass
 
@@ -101,13 +138,31 @@ class SiteCrawler:
     async def crawl(self) -> tuple[list[dict], dict]:
         meta_files = await self.fetch_meta_files()
 
+        # Pre-seed queue with same-domain sitemap URLs
+        sitemap_seeds = [
+            u for u in meta_files.get("sitemap_all_urls", [])
+            if self._is_same_domain(u) and not self._is_excluded(u)
+        ]
+
         self._sem = asyncio.Semaphore(MAX_CONCURRENT)
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
             context = await browser.new_context(
                 user_agent="Mozilla/5.0 (compatible; AIQABot/1.0)"
             )
+
+            # Phase 1: link-following from homepage
             await self._crawl_page(context, self.base_url, depth=0)
+
+            # Phase 2: crawl sitemap URLs not yet discovered by link-following
+            remaining = [
+                u for u in sitemap_seeds
+                if self._normalize(u) not in self.visited and len(self.visited) < self.max_pages
+            ]
+            if remaining:
+                tasks = [self._crawl_page(context, u, depth=1) for u in remaining]
+                await asyncio.gather(*tasks)
+
             await browser.close()
         return self.pages, meta_files
 
@@ -224,5 +279,5 @@ class SiteCrawler:
             ):
                 links.append(full_url)
 
-        tasks = [self._crawl_page(context, link, depth=depth + 1) for link in links[:10]]
+        tasks = [self._crawl_page(context, link, depth=depth + 1) for link in links[:50]]
         await asyncio.gather(*tasks)

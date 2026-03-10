@@ -136,6 +136,38 @@
     .stat-box.warn .value { color: #f59e0b; }
     .stat-box.ok .value { color: #22c55e; }
 
+    .section-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      user-select: none;
+      margin-bottom: 12px;
+      padding: 4px 0;
+    }
+
+    .section-header:hover h2 { color: #c4b5fd; }
+
+    .section-header h2 {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: #a78bfa;
+      margin-bottom: 0;
+      transition: color 0.15s;
+    }
+
+    .section-chevron {
+      font-size: 0.7rem;
+      color: #64748b;
+      transition: transform 0.2s;
+      flex-shrink: 0;
+    }
+
+    .section-chevron.collapsed { transform: rotate(-90deg); }
+
+    .section-body { overflow: hidden; }
+    .section-body.collapsed { display: none; }
+
     h2 { font-size: 1.1rem; font-weight: 600; margin-bottom: 12px; color: #a78bfa; }
 
     .issue-list {
@@ -951,73 +983,120 @@
           </div>
         </div>
 
-        <h2>Technical Setup</h2>
-        <div class="tech-setup">
-          <div class="tech-setup-item">
-            <span class="tech-label">robots.txt:</span> ${robotsTxt}
-          </div>
-          <div class="tech-setup-item">
-            <span class="tech-label">sitemap.xml:</span> ${sitemapInfo}
+        <div class="section-header" onclick="toggleSection('techsetup')">
+          <h2>Technical Setup</h2>
+          <span class="section-chevron" id="chev-techsetup">&#9660;</span>
+        </div>
+        <div class="section-body" id="sec-techsetup">
+          <div class="tech-setup">
+            <div class="tech-setup-item">
+              <span class="tech-label">robots.txt:</span> ${robotsTxt}
+            </div>
+            <div class="tech-setup-item">
+              <span class="tech-label">sitemap.xml:</span> ${sitemapInfo}
+            </div>
           </div>
         </div>
 
-        <h2>Indexability</h2>
-        <ul class="issue-list">
-          ${issueBlock('noindex', `Noindex pages: ${noindexCount}`, noindexCount > 0 ? '' : 'ok', noindexCount, idx.noindex?.urls)}
-          ${issueBlock('canonaway', `Canonicalized away: ${canonAwayCount} pages`, canonAwayCount > 0 ? '' : 'ok', canonAwayCount, idx.canonicalized_away?.urls)}
-        </ul>
+        <div class="section-header" onclick="toggleSection('indexability')">
+          <h2>Indexability</h2>
+          <span class="section-chevron" id="chev-indexability">&#9660;</span>
+        </div>
+        <div class="section-body" id="sec-indexability">
+          <ul class="issue-list">
+            ${issueBlock('noindex', `Noindex pages: ${noindexCount}`, noindexCount > 0 ? '' : 'ok', noindexCount, idx.noindex?.urls)}
+            ${issueBlock('canonaway', `Canonicalized away: ${canonAwayCount} pages`, canonAwayCount > 0 ? '' : 'ok', canonAwayCount, idx.canonicalized_away?.urls)}
+          </ul>
+        </div>
 
-        <h2>SEO</h2>
-        <ul class="issue-list">
-          ${issueBlock('title', `Missing title: ${missingTitle} pages`, missingTitle > 0 ? 'critical' : 'ok', missingTitle, issues.missing_title?.urls)}
-          ${issueBlock('meta', `Missing meta description: ${missingMeta} pages`, missingMeta > 0 ? (missingMeta > 5 ? 'critical' : '') : 'ok', missingMeta, issues.missing_meta_description?.urls)}
-          ${issueBlock('h1', `Missing H1: ${missingH1} pages`, missingH1 > 0 ? (missingH1 > 3 ? 'critical' : '') : 'ok', missingH1, issues.missing_h1?.urls)}
-          ${issueBlock('multih1', `Multiple H1 tags: ${multipleH1} pages`, multipleH1 > 0 ? '' : 'ok', multipleH1, issues.multiple_h1?.urls)}
-          ${issueBlock('canon', `Missing canonical: ${missingCanon} pages`, missingCanon > 0 ? '' : 'ok', missingCanon, issues.missing_canonical?.urls)}
-          ${issueBlock('duptitles', `Duplicate titles: ${dupTitles} pages`, dupTitles > 0 ? '' : 'ok', dupTitles, issues.duplicate_titles?.urls)}
-          ${issueBlock('titletoolong', `Title too long (&gt;60 chars): ${titleTooLong} pages`, titleTooLong > 0 ? '' : 'ok', titleTooLong, issues.title_too_long?.urls)}
-          ${issueBlock('titlestooshort', `Title too short (&lt;10 chars): ${titleTooShort} pages`, titleTooShort > 0 ? '' : 'ok', titleTooShort, issues.title_too_short?.urls)}
-          ${issueBlock('metatoolong', `Meta description too long (&gt;160 chars): ${metaTooLong} pages`, metaTooLong > 0 ? '' : 'ok', metaTooLong, issues.meta_description_too_long?.urls)}
-          ${issueBlock('metatooshort', `Meta description too short (&lt;70 chars): ${metaTooShort} pages`, metaTooShort > 0 ? '' : 'ok', metaTooShort, issues.meta_description_too_short?.urls)}
-          ${issueBlock('dupmeta', `Duplicate meta descriptions: ${dupMeta} pages`, dupMeta > 0 ? '' : 'ok', dupMeta, issues.duplicate_meta_descriptions?.urls)}
-        </ul>
+        <div class="section-header" onclick="toggleSection('seo')">
+          <h2>SEO</h2>
+          <span class="section-chevron" id="chev-seo">&#9660;</span>
+        </div>
+        <div class="section-body" id="sec-seo">
+          <ul class="issue-list">
+            ${issueBlock('title', `Missing title: ${missingTitle} pages`, missingTitle > 0 ? 'critical' : 'ok', missingTitle, issues.missing_title?.urls)}
+            ${issueBlock('meta', `Missing meta description: ${missingMeta} pages`, missingMeta > 0 ? (missingMeta > 5 ? 'critical' : '') : 'ok', missingMeta, issues.missing_meta_description?.urls)}
+            ${issueBlock('h1', `Missing H1: ${missingH1} pages`, missingH1 > 0 ? (missingH1 > 3 ? 'critical' : '') : 'ok', missingH1, issues.missing_h1?.urls)}
+            ${issueBlock('multih1', `Multiple H1 tags: ${multipleH1} pages`, multipleH1 > 0 ? '' : 'ok', multipleH1, issues.multiple_h1?.urls)}
+            ${issueBlock('canon', `Missing canonical: ${missingCanon} pages`, missingCanon > 0 ? '' : 'ok', missingCanon, issues.missing_canonical?.urls)}
+            ${issueBlock('duptitles', `Duplicate titles: ${dupTitles} pages`, dupTitles > 0 ? '' : 'ok', dupTitles, issues.duplicate_titles?.urls)}
+            ${issueBlock('titletoolong', `Title too long (&gt;60 chars): ${titleTooLong} pages`, titleTooLong > 0 ? '' : 'ok', titleTooLong, issues.title_too_long?.urls)}
+            ${issueBlock('titlestooshort', `Title too short (&lt;10 chars): ${titleTooShort} pages`, titleTooShort > 0 ? '' : 'ok', titleTooShort, issues.title_too_short?.urls)}
+            ${issueBlock('metatoolong', `Meta description too long (&gt;160 chars): ${metaTooLong} pages`, metaTooLong > 0 ? '' : 'ok', metaTooLong, issues.meta_description_too_long?.urls)}
+            ${issueBlock('metatooshort', `Meta description too short (&lt;70 chars): ${metaTooShort} pages`, metaTooShort > 0 ? '' : 'ok', metaTooShort, issues.meta_description_too_short?.urls)}
+            ${issueBlock('dupmeta', `Duplicate meta descriptions: ${dupMeta} pages`, dupMeta > 0 ? '' : 'ok', dupMeta, issues.duplicate_meta_descriptions?.urls)}
+          </ul>
+        </div>
 
-        <h2>Accessibility</h2>
-        <ul class="issue-list">
-          ${issueBlock('lang', `Missing HTML lang attribute: ${missingLang} pages`, missingLang > 0 ? 'critical' : 'ok', missingLang, issues.missing_html_lang?.urls)}
-          ${issueBlock('alt', `Missing alt tags: ${missingAlt} images across ${(issues.missing_alt_tags?.pages || []).length} pages`, missingAlt > 0 ? '' : 'ok', missingAlt, issues.missing_alt_tags?.pages)}
-          ${issueBlock('btn', `Buttons without label: ${missingBtn} across ${(issues.buttons_missing_label?.pages || []).length} pages`, missingBtn > 0 ? '' : 'ok', missingBtn, issues.buttons_missing_label?.pages)}
-        </ul>
+        <div class="section-header" onclick="toggleSection('accessibility')">
+          <h2>Accessibility</h2>
+          <span class="section-chevron" id="chev-accessibility">&#9660;</span>
+        </div>
+        <div class="section-body" id="sec-accessibility">
+          <ul class="issue-list">
+            ${issueBlock('lang', `Missing HTML lang attribute: ${missingLang} pages`, missingLang > 0 ? 'critical' : 'ok', missingLang, issues.missing_html_lang?.urls)}
+            ${issueBlock('alt', `Missing alt tags: ${missingAlt} images across ${(issues.missing_alt_tags?.pages || []).length} pages`, missingAlt > 0 ? '' : 'ok', missingAlt, issues.missing_alt_tags?.pages)}
+            ${issueBlock('btn', `Buttons without label: ${missingBtn} across ${(issues.buttons_missing_label?.pages || []).length} pages`, missingBtn > 0 ? '' : 'ok', missingBtn, issues.buttons_missing_label?.pages)}
+          </ul>
+        </div>
 
-        <h2>Content &amp; Technical</h2>
-        <ul class="issue-list">
-          ${issueBlock('thin', `Thin content (&lt;200 words): ${thinContent} pages (${cov.pct_thin_content || 0}%)`, thinContent > 0 ? '' : 'ok', thinContent, issues.thin_content_under_200_words?.urls)}
-          ${issueBlock('empty', `Empty pages: ${emptyPages}`, emptyPages > 0 ? 'critical' : 'ok', emptyPages, issues.empty_pages?.urls)}
-          ${issueBlock('broken', `Broken images: ${brokenImg}`, brokenImg > 0 ? 'critical' : 'ok', brokenImg, issues.broken_images?.pages)}
-          ${issueBlock('non200', `Non-200 status: ${non200} pages`, non200 > 0 ? 'critical' : 'ok', non200, issues.non_200_status?.pages)}
-        </ul>
+        <div class="section-header" onclick="toggleSection('content')">
+          <h2>Content &amp; Technical</h2>
+          <span class="section-chevron" id="chev-content">&#9660;</span>
+        </div>
+        <div class="section-body" id="sec-content">
+          <ul class="issue-list">
+            ${issueBlock('thin', `Thin content (&lt;200 words): ${thinContent} pages (${cov.pct_thin_content || 0}%)`, thinContent > 0 ? '' : 'ok', thinContent, issues.thin_content_under_200_words?.urls)}
+            ${issueBlock('empty', `Empty pages: ${emptyPages}`, emptyPages > 0 ? 'critical' : 'ok', emptyPages, issues.empty_pages?.urls)}
+            ${issueBlock('broken', `Broken images: ${brokenImg}`, brokenImg > 0 ? 'critical' : 'ok', brokenImg, issues.broken_images?.pages)}
+            ${issueBlock('non200', `Non-200 status: ${non200} pages`, non200 > 0 ? 'critical' : 'ok', non200, issues.non_200_status?.pages)}
+          </ul>
+        </div>
 
-        <h2>Performance</h2>
-        <ul class="issue-list">
-          ${issueBlock('slowpages', `Slow pages (&gt;3s): ${slowPgs} pages`, slowPgs > 0 ? '' : 'ok', slowPgs, issues.slow_pages?.urls)}
-          ${issueBlock('avgload', `Average load time: ${avgLoad} ms`, avgLoad > 3000 ? '' : avgLoad > 1500 ? 'warn' : 'ok', 0, [])}
-          ${issueBlock('deeppages', `Deep pages (&gt;3 clicks from home): ${deepPgs} pages`, deepPgs > 0 ? '' : 'ok', deepPgs, issues.deep_pages?.urls)}
-          ${issueBlock('redirects', `Redirect pages: ${redirectPgs} pages`, redirectPgs > 0 ? '' : 'ok', redirectPgs, issues.redirect_pages?.urls)}
-          ${issueBlock('jsdep', `JS-dependent pages: ${jsDep} pages`, jsDep > 0 ? '' : 'ok', jsDep, issues.js_dependent_pages?.urls)}
-        </ul>
+        <div class="section-header" onclick="toggleSection('performance')">
+          <h2>Performance</h2>
+          <span class="section-chevron" id="chev-performance">&#9660;</span>
+        </div>
+        <div class="section-body" id="sec-performance">
+          <ul class="issue-list">
+            ${issueBlock('slowpages', `Slow pages (&gt;3s): ${slowPgs} pages`, slowPgs > 0 ? '' : 'ok', slowPgs, issues.slow_pages?.urls)}
+            ${issueBlock('avgload', `Average load time: ${avgLoad} ms`, avgLoad > 3000 ? '' : avgLoad > 1500 ? 'warn' : 'ok', 0, [])}
+            ${issueBlock('deeppages', `Deep pages (&gt;3 clicks from home): ${deepPgs} pages`, deepPgs > 0 ? '' : 'ok', deepPgs, issues.deep_pages?.urls)}
+            ${issueBlock('redirects', `Redirect pages: ${redirectPgs} pages`, redirectPgs > 0 ? '' : 'ok', redirectPgs, issues.redirect_pages?.urls)}
+            ${issueBlock('jsdep', `JS-dependent pages: ${jsDep} pages`, jsDep > 0 ? '' : 'ok', jsDep, issues.js_dependent_pages?.urls)}
+          </ul>
+        </div>
 
-        <h2>Open Graph &amp; Schema</h2>
-        <ul class="issue-list">
-          ${issueBlock('missingog', `Missing OG title or image: ${missingOg} pages`, missingOg > 0 ? '' : 'ok', missingOg, issues.missing_og?.urls)}
-          ${issueBlock('missingschema', `Missing structured data (Schema.org): ${missingSchema} pages`, missingSchema > 0 ? '' : 'ok', missingSchema, issues.missing_schema?.urls)}
-        </ul>
+        <div class="section-header" onclick="toggleSection('og')">
+          <h2>Open Graph &amp; Schema</h2>
+          <span class="section-chevron" id="chev-og">&#9660;</span>
+        </div>
+        <div class="section-body" id="sec-og">
+          <ul class="issue-list">
+            ${issueBlock('missingog', `Missing OG title or image: ${missingOg} pages`, missingOg > 0 ? '' : 'ok', missingOg, issues.missing_og?.urls)}
+            ${issueBlock('missingschema', `Missing structured data (Schema.org): ${missingSchema} pages`, missingSchema > 0 ? '' : 'ok', missingSchema, issues.missing_schema?.urls)}
+          </ul>
+        </div>
 
-        <h2>URL Quality</h2>
-        <ul class="issue-list">
-          ${issueBlock('urlissues', `URL issues (uppercase / underscores / too long): ${urlIssues} pages`, urlIssues > 0 ? '' : 'ok', urlIssues, issues.url_issues?.urls)}
-        </ul>
+        <div class="section-header" onclick="toggleSection('urlquality')">
+          <h2>URL Quality</h2>
+          <span class="section-chevron" id="chev-urlquality">&#9660;</span>
+        </div>
+        <div class="section-body" id="sec-urlquality">
+          <ul class="issue-list">
+            ${issueBlock('urlissues', `URL issues (uppercase / underscores / too long): ${urlIssues} pages`, urlIssues > 0 ? '' : 'ok', urlIssues, issues.url_issues?.urls)}
+          </ul>
+        </div>
 
-        ${data.ai_summary ? `<h2>AI Summary</h2><div class="ai-summary">${data.ai_summary}</div>` : ''}
+        ${data.ai_summary ? `
+        <div class="section-header" onclick="toggleSection('aisummary')">
+          <h2>AI Summary</h2>
+          <span class="section-chevron" id="chev-aisummary">&#9660;</span>
+        </div>
+        <div class="section-body" id="sec-aisummary">
+          <div class="ai-summary">${data.ai_summary}</div>
+        </div>` : ''}
 
         <details>
           <summary>Page Details (${(data.page_details || []).length} pages)</summary>
@@ -1049,6 +1128,14 @@
         </details>
       `;
       document.getElementById('report').style.display = 'block';
+    }
+
+    function toggleSection(id) {
+      const body = document.getElementById('sec-' + id);
+      const chevron = document.getElementById('chev-' + id);
+      if (!body) return;
+      const collapsed = body.classList.toggle('collapsed');
+      chevron.classList.toggle('collapsed', collapsed);
     }
 
     function setStatus(msg) {

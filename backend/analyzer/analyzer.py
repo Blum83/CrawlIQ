@@ -287,7 +287,7 @@ def aggregate_reports(page_reports: list[PageReport]) -> dict:
 
     return {
         "total_pages": total,
-        "pages_crawled": len(valid),
+        "pages_crawled": total,
         "indexable_pages": len(indexable),
         "non_indexable_pages": len(non_indexable),
         "error_pages": len(error_pages),
