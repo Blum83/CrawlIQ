@@ -7,6 +7,12 @@ from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 import uuid
 
+try:
+    import httpx as _httpx
+    _HTTPX_AVAILABLE = True
+except ImportError:
+    _HTTPX_AVAILABLE = False
+
 from crawler.crawler import SiteCrawler
 from analyzer.analyzer import analyze_page, aggregate_reports
 from agent.qa_agent import generate_ai_summary
@@ -37,6 +43,9 @@ async def run_analysis(job_id: str, url: str, max_pages: int, exclude_patterns: 
     jobs[job_id]["status"] = "running"
 
     try:
+        # 0. Resolve protocol: try https first, fall back to http if needed
+        url = await _resolve_protocol(url)
+
         # 1. Crawl (progress updated in real-time via callback)
         def on_progress(crawled: int):
             jobs[job_id]["progress"] = crawled
@@ -89,9 +98,9 @@ def _validate_url(url: str) -> str:
     """Validate and sanitize URL. Returns cleaned URL or raises HTTPException."""
     url = url.strip()
 
-    # Must start with http:// or https://
+    # If no protocol given, prefix with https:// for validation; _resolve_protocol will probe both
     if not url.lower().startswith(("http://", "https://")):
-        raise HTTPException(status_code=400, detail="URL must start with http:// or https://")
+        url = "https://" + url
 
     parsed = urlparse(url)
 
@@ -117,6 +126,28 @@ def _validate_url(url: str) -> str:
     # Return only scheme + netloc + path (strip query/fragment injections)
     clean = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/") or f"{parsed.scheme}://{parsed.netloc}"
     return clean
+
+
+async def _resolve_protocol(url: str) -> str:
+    """Try https first, then http. Returns the URL with the working protocol."""
+    parsed = urlparse(url)
+    path = parsed.path.rstrip("/") if parsed.path and parsed.path != "/" else ""
+    https_url = f"https://{parsed.netloc}{path}" if path else f"https://{parsed.netloc}"
+    http_url  = f"http://{parsed.netloc}{path}"  if path else f"http://{parsed.netloc}"
+
+    if not _HTTPX_AVAILABLE:
+        return https_url
+
+    for try_url in [https_url, http_url]:
+        try:
+            async with _httpx.AsyncClient(timeout=8, follow_redirects=True, verify=False) as client:
+                r = await client.head(try_url, headers={"User-Agent": "Mozilla/5.0"})
+                if r.status_code < 500:
+                    return try_url
+        except Exception:
+            continue
+
+    return https_url  # fallback
 
 
 @router.post("/analyze", response_model=JobStatus)

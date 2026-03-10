@@ -49,7 +49,7 @@
       margin-bottom: 24px;
     }
 
-    input[type="url"] {
+    input[type="text"].url-input {
       flex: 1;
       background: #0f0f13;
       border: 1px solid #2d2d3d;
@@ -61,7 +61,7 @@
       transition: border-color 0.2s;
     }
 
-    input[type="url"]:focus { border-color: #7c3aed; }
+    input[type="text"].url-input:focus { border-color: #7c3aed; }
 
     button {
       background: linear-gradient(135deg, #7c3aed, #3b82f6);
@@ -436,6 +436,75 @@
 
     .table-filter-row select:focus { border-color: #7c3aed; }
 
+    /* Tooltips on stat boxes */
+    .stat-box {
+      position: relative;
+    }
+
+    .stat-box[data-tip]:hover::after {
+      content: attr(data-tip);
+      position: absolute;
+      bottom: calc(100% + 10px);
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1e2130;
+      border: 1px solid #3d3d5c;
+      color: #cbd5e1;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 0.75rem;
+      line-height: 1.5;
+      white-space: normal;
+      width: 200px;
+      text-align: center;
+      z-index: 20;
+      pointer-events: none;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+    }
+
+    .stat-box[data-tip]:hover::before {
+      content: '';
+      position: absolute;
+      bottom: calc(100% + 4px);
+      left: 50%;
+      transform: translateX(-50%);
+      border: 6px solid transparent;
+      border-top-color: #3d3d5c;
+      z-index: 21;
+      pointer-events: none;
+    }
+
+    /* Indexability bar */
+    .index-ratio {
+      margin-bottom: 24px;
+    }
+
+    .index-ratio-labels {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.78rem;
+      color: #64748b;
+      margin-bottom: 6px;
+    }
+
+    .index-ratio-labels .ok-label { color: #22c55e; font-weight: 600; }
+    .index-ratio-labels .bad-label { color: #f59e0b; font-weight: 600; }
+
+    .index-ratio-bar {
+      height: 8px;
+      border-radius: 99px;
+      background: #0f0f13;
+      border: 1px solid #2d2d3d;
+      overflow: hidden;
+    }
+
+    .index-ratio-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #22c55e, #3b82f6);
+      border-radius: 99px;
+      transition: width 0.6s ease;
+    }
+
     /* Mobile fixes */
     @media (max-width: 500px) {
       .card { padding: 20px 16px; }
@@ -457,7 +526,7 @@
 
   <div class="card">
     <div class="input-row">
-      <input type="url" id="urlInput" placeholder="https://example.com" />
+      <input type="text" id="urlInput" class="url-input" placeholder="example.com or https://example.com" autocomplete="off" spellcheck="false" />
       <button id="analyzeBtn" onclick="startAnalysis()">Analyze</button>
     </div>
 
@@ -537,16 +606,19 @@
 
     async function startAnalysis() {
       let url = document.getElementById('urlInput').value.trim();
-      if (!url) { showModal('Enter a URL', 'Please paste the website address you want to audit, e.g. https://example.com'); return; }
-      if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
+      if (!url) { showModal('Enter a URL', 'Please paste the website address you want to audit, e.g. example.com'); return; }
+
+      // Validate: bare domain or full URL — test with https:// prefix if needed
+      const hasProtocol = /^https?:\/\//i.test(url);
+      const testUrl = hasProtocol ? url : 'https://' + url;
       try {
-        const p = new URL(url);
+        const p = new URL(testUrl);
         if (!p.hostname.includes('.')) throw new Error();
       } catch {
-        showModal('Invalid URL', 'Please enter a valid website URL starting with https://, e.g. https://example.com');
+        showModal('Invalid URL', 'Please enter a valid website URL, e.g. example.com or https://example.com');
         return;
       }
-      document.getElementById('urlInput').value = url;
+      // Send URL as-is — if no protocol, backend will auto-detect http vs https
 
       const rawPatterns = document.getElementById('excludePatterns').value;
       const exclude_patterns = rawPatterns.split('\n').map(s => s.trim()).filter(Boolean);
@@ -840,24 +912,42 @@
         ? `<span class="tech-ok">&#10003; found</span>${meta.sitemap_urls?.length ? `<span class="tech-detail">(${meta.sitemap_urls.length} sample URLs)</span>` : ''}`
         : `<span class="tech-bad">&#10007; not found</span>`;
 
+      const indexablePct = data.pages_crawled > 0
+        ? Math.round((data.indexable_pages || 0) / data.pages_crawled * 100)
+        : 0;
+
       document.getElementById('report').innerHTML = `
         <div class="stat-grid">
-          <div class="stat-box"><div class="value">${data.pages_crawled || 0}</div><div class="label">Pages Crawled</div></div>
-          <div class="stat-box ok"><div class="value">${data.indexable_pages || 0}</div><div class="label">Indexable Pages</div></div>
-          <div class="stat-box ${data.non_indexable_pages > 0 ? '' : 'ok'}">
+          <div class="stat-box" data-tip="Total pages discovered and crawled on the site">
+            <div class="value">${data.pages_crawled || 0}</div><div class="label">Pages Crawled</div>
+          </div>
+          <div class="stat-box ok" data-tip="Pages that Google can index — no noindex tag, canonical points to itself, not blocked by robots.txt">
+            <div class="value">${data.indexable_pages || 0}</div><div class="label">Indexable Pages</div>
+          </div>
+          <div class="stat-box ${data.non_indexable_pages > 0 ? '' : 'ok'}" data-tip="Pages excluded from search index — noindex tag, canonical to another URL, or robots.txt blocked">
             <div class="value">${data.non_indexable_pages || 0}</div><div class="label">Non-Indexable</div>
           </div>
-          <div class="stat-box ${totalIssues > 10 ? '' : totalIssues > 0 ? 'warn' : 'ok'}">
+          <div class="stat-box ${totalIssues > 10 ? '' : totalIssues > 0 ? 'warn' : 'ok'}" data-tip="Total count of SEO, accessibility and content issues found across all pages">
             <div class="value">${totalIssues}</div><div class="label">Total Issues</div>
           </div>
-          <div class="stat-box ${cov.avg_word_count < 200 ? '' : 'ok'}">
+          <div class="stat-box ${cov.avg_word_count < 200 ? '' : 'ok'}" data-tip="Average word count per page. Google recommends 300+ words for good content depth">
             <div class="value">${cov.avg_word_count || 0}</div><div class="label">Avg Word Count</div>
           </div>
-          <div class="stat-box ${data.error_pages > 0 ? '' : 'ok'}">
+          <div class="stat-box ${data.error_pages > 0 ? '' : 'ok'}" data-tip="Pages returning 4xx or 5xx HTTP status codes — these hurt SEO and user experience">
             <div class="value">${data.error_pages || 0}</div><div class="label">Error Pages</div>
           </div>
-          <div class="stat-box ${scoreCls}">
+          <div class="stat-box ${scoreCls}" data-tip="Overall SEO health score from 0 to 100. Calculated based on missing tags, broken pages, performance and accessibility issues">
             <div class="value">${score}</div><div class="label">SEO Score</div>
+          </div>
+        </div>
+
+        <div class="index-ratio">
+          <div class="index-ratio-labels">
+            <span class="ok-label">${data.indexable_pages || 0} in index (${indexablePct}%)</span>
+            <span class="bad-label">${data.non_indexable_pages || 0} not indexed (${100 - indexablePct}%)</span>
+          </div>
+          <div class="index-ratio-bar">
+            <div class="index-ratio-fill" style="width: ${indexablePct}%"></div>
           </div>
         </div>
 
