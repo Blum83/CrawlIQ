@@ -11,7 +11,7 @@ try:
 except ImportError:
     _HTTPX_AVAILABLE = False
 
-MAX_CONCURRENT = 5  # max parallel browser pages
+MAX_CONCURRENT = 3  # max parallel browser pages (reduced to save RAM)
 
 _DEFAULT_META = {
     "robots_txt_exists": False,
@@ -152,25 +152,56 @@ class SiteCrawler:
         ]
 
         self._sem = asyncio.Semaphore(MAX_CONCURRENT)
-        async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=True)
-            context = await browser.new_context(
-                user_agent="Mozilla/5.0 (compatible; AIQABot/1.0)"
+
+        # Single shared httpx client for all JS-detection checks
+        self._http_client = None
+        if _HTTPX_AVAILABLE:
+            self._http_client = httpx.AsyncClient(
+                timeout=10,
+                follow_redirects=True,
+                headers={"User-Agent": "Googlebot/2.1"},
             )
 
-            # Phase 1: link-following from homepage
-            await self._crawl_page(context, self.base_url, depth=0)
+        try:
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(
+                    headless=True,
+                    args=[
+                        "--no-sandbox",
+                        "--disable-dev-shm-usage",
+                        "--disable-gpu",
+                        "--disable-extensions",
+                        "--disable-background-networking",
+                        "--disable-sync",
+                        "--metrics-recording-only",
+                        "--mute-audio",
+                        "--no-first-run",
+                        "--blink-settings=imagesEnabled=false",
+                    ],
+                )
+                context = await browser.new_context(
+                    user_agent="Mozilla/5.0 (compatible; AIQABot/1.0)",
+                    java_script_enabled=True,
+                )
 
-            # Phase 2: crawl sitemap URLs not yet discovered by link-following
-            remaining = [
-                u for u in sitemap_seeds
-                if self._normalize(u) not in self.visited and len(self.visited) < self.max_pages
-            ]
-            if remaining:
-                tasks = [self._crawl_page(context, u, depth=1) for u in remaining]
-                await asyncio.gather(*tasks)
+                # Phase 1: link-following from homepage
+                await self._crawl_page(context, self.base_url, depth=0)
 
-            await browser.close()
+                # Phase 2: crawl sitemap URLs not yet discovered by link-following
+                remaining = [
+                    u for u in sitemap_seeds
+                    if self._normalize(u) not in self.visited and len(self.visited) < self.max_pages
+                ]
+                if remaining:
+                    tasks = [self._crawl_page(context, u, depth=1) for u in remaining]
+                    await asyncio.gather(*tasks)
+
+                await context.close()
+                await browser.close()
+        finally:
+            if self._http_client:
+                await self._http_client.aclose()
+
         return self.pages, meta_files
 
     async def _crawl_page(self, context, url: str, depth: int = 0):
@@ -206,23 +237,18 @@ class SiteCrawler:
                 # JS rendering check: compare plain httpx word count vs rendered
                 js_dependent = False
                 plain_word_count = 0
-                if _HTTPX_AVAILABLE:
+                if self._http_client:
                     try:
-                        async with httpx.AsyncClient(
-                            timeout=10,
-                            follow_redirects=True,
-                            headers={"User-Agent": "Googlebot/2.1"},
-                        ) as client:
-                            plain_r = await client.get(url)
-                            plain_soup = BeautifulSoup(plain_r.text, "html.parser")
-                            plain_body = plain_soup.find("body")
-                            if plain_body:
-                                for tag in plain_body(["script", "style"]):
-                                    tag.decompose()
-                                plain_text = plain_body.get_text(separator=" ")
-                            else:
-                                plain_text = plain_soup.get_text(separator=" ")
-                            plain_word_count = len([w for w in plain_text.split() if w.strip()])
+                        plain_r = await self._http_client.get(url)
+                        plain_soup = BeautifulSoup(plain_r.text, "html.parser")
+                        plain_body = plain_soup.find("body")
+                        if plain_body:
+                            for tag in plain_body(["script", "style"]):
+                                tag.decompose()
+                            plain_text = plain_body.get_text(separator=" ")
+                        else:
+                            plain_text = plain_soup.get_text(separator=" ")
+                        plain_word_count = len([w for w in plain_text.split() if w.strip()])
 
                         # Count words in rendered HTML
                         rendered_soup = BeautifulSoup(html, "html.parser")
