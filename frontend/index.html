@@ -765,7 +765,10 @@
           <div class="url-modal-title" id="urlModalTitle">URLs</div>
           <div class="url-modal-count" id="urlModalCount"></div>
         </div>
-        <button class="url-modal-x" onclick="closeUrlModal()">&#10005;</button>
+        <div style="display:flex;align-items:center;gap:8px;">
+          <button id="urlModalCsvBtn" class="table-export-btn" onclick="exportModalCsv(this)">&#8595; CSV</button>
+          <button class="url-modal-x" onclick="closeUrlModal()">&#10005;</button>
+        </div>
       </div>
       <div class="url-modal-body">
         <input class="url-modal-search" id="urlModalSearch" type="text" placeholder="Filter URLs..." oninput="filterUrlModal()" />
@@ -777,7 +780,8 @@
   <script>
     let pollInterval = null;
     let currentJobId = null;
-    let _urlModalData = {}; // stores full url lists keyed by id
+    let _urlModalData = {};   // stores full url lists keyed by id
+    let _urlModalLabels = {}; // stores human-readable labels keyed by id
 
     function showModal(title, msg) {
       document.getElementById('modalTitle').textContent = title;
@@ -926,13 +930,14 @@
       return `<div class="${cls}">${badge}<a href="${actualUrl}" target="_blank" title="${actualUrl}">${actualUrl}</a>${extra}${redir}</div>`;
     }
 
-    function makeUrlList(urls, modalKey) {
+    function makeUrlList(urls, modalKey, label) {
       if (!urls || urls.length === 0) return '';
       const shown = urls.slice(0, 10);
       const remaining = urls.length - shown.length;
       const items = shown.map(u => _renderUrlItem(u)).join('');
       if (remaining > 0) {
         _urlModalData[modalKey] = urls;
+        if (label) _urlModalLabels[modalKey] = label;
         return items + `<button class="more-btn" onclick="openUrlModal('${modalKey}')">...and ${remaining} more</button>`;
       }
       return items;
@@ -940,11 +945,29 @@
 
     function openUrlModal(key) {
       const urls = _urlModalData[key] || [];
-      document.getElementById('urlModalTitle').textContent = key.replace(/-/g, ' ');
+      const label = _urlModalLabels[key] || key.replace(/-/g, ' ');
+      document.getElementById('urlModalTitle').textContent = label;
       document.getElementById('urlModalCount').textContent = `${urls.length} URLs total`;
       document.getElementById('urlModalSearch').value = '';
       document.getElementById('urlModalList').innerHTML = urls.map(u => _renderUrlItem(u, 'url-modal-item')).join('');
       document.getElementById('urlListModal').classList.add('open');
+      document.getElementById('urlModalCsvBtn').dataset.key = key;
+    }
+
+    function exportModalCsv(btn) {
+      const key = btn.dataset.key;
+      const urls = _urlModalData[key] || [];
+      const label = _urlModalLabels[key] || key;
+      const filename = label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '') + '.csv';
+      const lines = urls.map(u => {
+        const url = typeof u === 'object' ? (u.url || u.redirect_to || '') : u;
+        return `"${url.replace(/"/g, '""')}"`;
+      });
+      const csv = 'URL\n' + lines.join('\n');
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }));
+      a.download = filename;
+      a.click();
     }
 
     function closeUrlModal(e) {
@@ -975,7 +998,7 @@
       const hasUrls = urlList && urlList.length > 0;
       const toggleHint = hasUrls ? `<span class="issue-toggle">&#9660; show ${urlList.length} URLs</span>` : '';
       const urlsHtml = hasUrls
-        ? `<div class="issue-urls" id="urls-${id}">${makeUrlList(urlList, id)}</div>`
+        ? `<div class="issue-urls" id="urls-${id}">${makeUrlList(urlList, id, label)}</div>`
         : '';
       return `
         <li class="issue-item ${cls}">
