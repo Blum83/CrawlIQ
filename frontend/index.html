@@ -674,6 +674,7 @@
 
       document.getElementById('analyzeBtn').disabled = true;
       document.getElementById('report').style.display = 'none';
+      document.getElementById('exportBtns').style.display = 'none';
       setStatus('Starting analysis...');
       showProgress(true);
 
@@ -701,6 +702,16 @@
       pollInterval = setInterval(async () => {
         try {
           const res = await fetch(`/api/status/${jobId}`);
+
+          if (res.status === 404) {
+            clearInterval(pollInterval);
+            document.getElementById('cancelWrap').style.display = 'none';
+            setStatus('Session expired — server was restarted. Please run the analysis again.');
+            showProgress(false);
+            document.getElementById('analyzeBtn').disabled = false;
+            return;
+          }
+
           const job = await res.json();
 
           dots = (dots + 1) % 4;
@@ -734,7 +745,7 @@
             showProgress(false);
             document.getElementById('analyzeBtn').disabled = false;
           } else {
-            setStatus(`Status: ${job.status}${dot}`);
+            setStatus(`Waiting${dot}`);
           }
         } catch (e) {
           setStatus('Polling error: ' + e.message);
