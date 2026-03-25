@@ -153,54 +153,41 @@ class SiteCrawler:
 
         self._sem = asyncio.Semaphore(MAX_CONCURRENT)
 
-        # Single shared httpx client for all JS-detection checks
-        self._http_client = None
-        if _HTTPX_AVAILABLE:
-            self._http_client = httpx.AsyncClient(
-                timeout=10,
-                follow_redirects=True,
-                headers={"User-Agent": "Googlebot/2.1"},
+        async with async_playwright() as p:
+            browser = await p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                    "--disable-extensions",
+                    "--disable-background-networking",
+                    "--disable-sync",
+                    "--metrics-recording-only",
+                    "--mute-audio",
+                    "--no-first-run",
+                    "--blink-settings=imagesEnabled=false",
+                ],
+            )
+            context = await browser.new_context(
+                user_agent="Mozilla/5.0 (compatible; AIQABot/1.0)",
+                java_script_enabled=True,
             )
 
-        try:
-            async with async_playwright() as p:
-                browser = await p.chromium.launch(
-                    headless=True,
-                    args=[
-                        "--no-sandbox",
-                        "--disable-dev-shm-usage",
-                        "--disable-gpu",
-                        "--disable-extensions",
-                        "--disable-background-networking",
-                        "--disable-sync",
-                        "--metrics-recording-only",
-                        "--mute-audio",
-                        "--no-first-run",
-                        "--blink-settings=imagesEnabled=false",
-                    ],
-                )
-                context = await browser.new_context(
-                    user_agent="Mozilla/5.0 (compatible; AIQABot/1.0)",
-                    java_script_enabled=True,
-                )
+            # Phase 1: link-following from homepage
+            await self._crawl_page(context, self.base_url, depth=0)
 
-                # Phase 1: link-following from homepage
-                await self._crawl_page(context, self.base_url, depth=0)
+            # Phase 2: crawl sitemap URLs not yet discovered by link-following
+            remaining = [
+                u for u in sitemap_seeds
+                if self._normalize(u) not in self.visited and len(self.visited) < self.max_pages
+            ]
+            if remaining:
+                tasks = [self._crawl_page(context, u, depth=1) for u in remaining]
+                await asyncio.gather(*tasks)
 
-                # Phase 2: crawl sitemap URLs not yet discovered by link-following
-                remaining = [
-                    u for u in sitemap_seeds
-                    if self._normalize(u) not in self.visited and len(self.visited) < self.max_pages
-                ]
-                if remaining:
-                    tasks = [self._crawl_page(context, u, depth=1) for u in remaining]
-                    await asyncio.gather(*tasks)
-
-                await context.close()
-                await browser.close()
-        finally:
-            if self._http_client:
-                await self._http_client.aclose()
+            await context.close()
+            await browser.close()
 
         return self.pages, meta_files
 
@@ -217,6 +204,23 @@ class SiteCrawler:
         async with self._sem:
             try:
                 page = await context.new_page()
+
+                # Capture raw (pre-JS) HTML via route interception — no extra HTTP request needed
+                raw_html_ref: list[str] = []
+
+                async def _capture_raw(route, request):
+                    if request.resource_type == "document" and not raw_html_ref:
+                        resp = await route.fetch()
+                        try:
+                            raw_html_ref.append((await resp.body()).decode("utf-8", errors="ignore"))
+                        except Exception:
+                            raw_html_ref.append("")
+                        await route.fulfill(response=resp)
+                    else:
+                        await route.continue_()
+
+                await page.route("**/*", _capture_raw)
+
                 t0 = time.monotonic()
                 response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 load_time_ms = int((time.monotonic() - t0) * 1000)
@@ -234,13 +238,12 @@ class SiteCrawler:
 
                 html = await page.content()
 
-                # JS rendering check: compare plain httpx word count vs rendered
+                # JS rendering check: compare raw HTML word count vs rendered
                 js_dependent = False
                 plain_word_count = 0
-                if self._http_client:
+                if raw_html_ref:
                     try:
-                        plain_r = await self._http_client.get(url)
-                        plain_soup = BeautifulSoup(plain_r.text, "html.parser")
+                        plain_soup = BeautifulSoup(raw_html_ref[0], "html.parser")
                         plain_body = plain_soup.find("body")
                         if plain_body:
                             for tag in plain_body(["script", "style"]):
@@ -250,7 +253,6 @@ class SiteCrawler:
                             plain_text = plain_soup.get_text(separator=" ")
                         plain_word_count = len([w for w in plain_text.split() if w.strip()])
 
-                        # Count words in rendered HTML
                         rendered_soup = BeautifulSoup(html, "html.parser")
                         rendered_body = rendered_soup.find("body")
                         if rendered_body:
