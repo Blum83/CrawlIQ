@@ -206,6 +206,7 @@ class SiteCrawler:
         self.visited.add(normalized)
 
         async with self._sem:
+            page = None
             try:
                 page = await context.new_page()
 
@@ -214,14 +215,21 @@ class SiteCrawler:
 
                 async def _capture_raw(route, request):
                     if request.resource_type == "document" and not raw_html_ref:
-                        resp = await route.fetch()
                         try:
-                            raw_html_ref.append((await resp.body()).decode("utf-8", errors="ignore"))
+                            resp = await route.fetch(timeout=20000)
+                            try:
+                                raw_html_ref.append((await resp.body()).decode("utf-8", errors="ignore"))
+                            except Exception:
+                                raw_html_ref.append("")
+                            await route.fulfill(response=resp)
                         except Exception:
                             raw_html_ref.append("")
-                        await route.fulfill(response=resp)
+                            await route.continue_()
                     else:
-                        await route.continue_()
+                        try:
+                            await route.continue_()
+                        except Exception:
+                            pass
 
                 await page.route("**/*", _capture_raw)
 
@@ -287,7 +295,6 @@ class SiteCrawler:
                 except Exception:
                     pass
 
-                await page.close()
             except Exception as e:
                 self.pages.append({
                     "url": url,
@@ -304,6 +311,12 @@ class SiteCrawler:
                     "plain_word_count": 0,
                 })
                 return
+            finally:
+                if page and not page.is_closed():
+                    try:
+                        await page.close()
+                    except Exception:
+                        pass
 
         self.pages.append({
             "url": url,
