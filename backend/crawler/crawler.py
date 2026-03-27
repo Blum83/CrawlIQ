@@ -22,7 +22,7 @@ _DEFAULT_META = {
 
 
 class SiteCrawler:
-    def __init__(self, base_url: str, max_pages: int = 50, on_progress=None, exclude_patterns: list[str] | None = None, cancel_check=None):
+    def __init__(self, base_url: str, max_pages: int = 50, on_progress=None, on_sitemap=None, exclude_patterns: list[str] | None = None, cancel_check=None):
         self.base_url = base_url.rstrip("/")
         self.domain = urlparse(base_url).netloc
         self.max_pages = max_pages
@@ -30,6 +30,7 @@ class SiteCrawler:
         self.pages: list[dict] = []
         self._sem: asyncio.Semaphore | None = None
         self._on_progress = on_progress  # optional callback(crawled: int)
+        self._on_sitemap = on_sitemap    # optional callback(estimated_total: int)
         self._cancel_check = cancel_check  # optional callback() -> bool
         self._exclude = [p.strip() for p in (exclude_patterns or []) if p.strip()]
 
@@ -150,6 +151,9 @@ class SiteCrawler:
             u for u in meta_files.get("sitemap_all_urls", [])
             if self._is_same_domain(u) and not self._is_excluded(u)
         ]
+
+        if self._on_sitemap and sitemap_seeds:
+            self._on_sitemap(min(len(sitemap_seeds), self.max_pages))
 
         self._sem = asyncio.Semaphore(MAX_CONCURRENT)
 

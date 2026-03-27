@@ -100,7 +100,28 @@
       background: linear-gradient(90deg, #7c3aed, #3b82f6);
       border-radius: 8px;
       width: 0%;
-      transition: width 0.4s;
+      transition: width 0.5s ease;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Shimmer overlay — visible only in indeterminate phase */
+    .progress-bar::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.18) 50%, transparent 100%);
+      background-size: 200% 100%;
+      animation: shimmer 1.4s infinite;
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    .progress-bar.indeterminate::after { opacity: 1; }
+
+    @keyframes shimmer {
+      0%   { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
     }
 
     /* Report */
@@ -942,14 +963,28 @@
 
           if (job.status === 'running') {
             const crawled = job.progress || 0;
-            const total = job.total || 0;
-            const p = crawled > 0 ? Math.min(crawled / (total || crawled) * 100, 95) : 10;
-            document.getElementById('progressBar').style.width = p + '%';
-            setStatus(crawled > 0 ? `Crawling${dot} ${crawled} pages` : `Crawling${dot}`);
+            const estimated = job.estimated_total || 0;
+            const bar = document.getElementById('progressBar');
+            let p, label;
+            if (estimated > 0) {
+              // We know the sitemap total — show real progress
+              p = Math.min(crawled / estimated * 100, 97);
+              bar.classList.remove('indeterminate');
+              label = `Crawling${dot} ${crawled} / ${estimated} pages`;
+            } else {
+              // Sitemap not yet fetched — indeterminate shimmer at 5%
+              p = 5;
+              bar.classList.add('indeterminate');
+              label = crawled > 0 ? `Crawling${dot} ${crawled} pages` : `Crawling${dot}`;
+            }
+            bar.style.width = p + '%';
+            setStatus(label);
           } else if (job.status === 'done') {
             clearInterval(pollInterval);
             document.getElementById('cancelWrap').style.display = 'none';
-            document.getElementById('progressBar').style.width = '100%';
+            const bar = document.getElementById('progressBar');
+            bar.classList.remove('indeterminate');
+            bar.style.width = '100%';
             setStatus('Analysis complete!');
             setTimeout(() => showProgress(false), 600);
             renderReport(job.result, jobId);

@@ -78,6 +78,7 @@ class JobStatus(BaseModel):
     status: str  # pending | running | done | error
     progress: int = 0
     total: int = 0
+    estimated_total: int = 0
     result: dict | None = None
     error: str | None = None
 
@@ -93,10 +94,13 @@ async def run_analysis(job_id: str, url: str, max_pages: int, exclude_patterns: 
         def on_progress(crawled: int):
             job_update(job_id, progress=crawled)
 
+        def on_sitemap(estimated: int):
+            job_update(job_id, estimated_total=estimated)
+
         def cancel_check() -> bool:
             return (job_get(job_id) or {}).get("status") == "cancelled"
 
-        crawler = SiteCrawler(url, max_pages=max_pages, on_progress=on_progress, exclude_patterns=exclude_patterns, cancel_check=cancel_check)
+        crawler = SiteCrawler(url, max_pages=max_pages, on_progress=on_progress, on_sitemap=on_sitemap, exclude_patterns=exclude_patterns, cancel_check=cancel_check)
         pages, meta_files = await crawler.crawl()
         job_update(job_id, total=len(pages), progress=len(pages))
 
@@ -200,6 +204,7 @@ async def start_analysis(req: AnalyzeRequest, background_tasks: BackgroundTasks)
         "status": "pending",
         "progress": 0,
         "total": 0,
+        "estimated_total": 0,
         "result": None,
         "error": None,
     }
