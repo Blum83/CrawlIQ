@@ -225,15 +225,10 @@ async def get_status(job_id: str):
     return JobStatus(**job)
 
 
-def _report_filename(target_url: str, ext: str) -> str:
-    """Build a filename like yummyani.me-qa-report-2026-03-27.html"""
-    from datetime import date
-    import re
-    domain = urlparse(target_url).netloc or "site"
-    domain = re.sub(r"^www\.", "", domain)
-    domain = re.sub(r"[^\w.\-]", "_", domain)
-    today = date.today().isoformat()
-    return f"{domain}-qa-report-{today}.{ext}"
+def _report_filename(ext: str) -> str:
+    from datetime import datetime
+    ts = datetime.now().strftime("%Y-%m-%d_%H-%M")
+    return f"report-{ts}.{ext}"
 
 
 def _get_done_result(job_id: str) -> dict:
@@ -247,7 +242,7 @@ def _get_done_result(job_id: str) -> dict:
 async def export_report_html(job_id: str):
     result = _get_done_result(job_id)
     html = export_html(result.get("target_url", ""), result)
-    fname = _report_filename(result.get("target_url", ""), "html")
+    fname = _report_filename("html")
     return HTMLResponse(content=html, headers={
         "Content-Disposition": f'attachment; filename="{fname}"'
     })
@@ -257,7 +252,7 @@ async def export_report_html(job_id: str):
 async def export_report_excel(job_id: str):
     result = _get_done_result(job_id)
     data = export_excel(result.get("target_url", ""), result)
-    fname = _report_filename(result.get("target_url", ""), "xlsx")
+    fname = _report_filename("xlsx")
     return Response(content=data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
@@ -266,7 +261,7 @@ async def export_report_excel(job_id: str):
 async def export_report_csv(job_id: str):
     result = _get_done_result(job_id)
     data = export_csv(result)
-    fname = _report_filename(result.get("target_url", ""), "csv")
+    fname = _report_filename("csv")
     return Response(content=data, media_type="text/csv",
                     headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 

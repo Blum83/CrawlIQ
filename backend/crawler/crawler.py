@@ -150,7 +150,11 @@ class SiteCrawler:
         await self._httpx_phase(sitemap_seeds)
 
         # Phase 2 — Playwright for JS pages + blocked pages + perf sample
-        js_urls      = [p["url"] for p in self.pages if p.get("js_dependent")][:MAX_PLAYWRIGHT_SPA]
+        all_js = [p["url"] for p in self.pages if p.get("js_dependent")]
+        js_ratio = len(all_js) / max(len(self.pages), 1)
+        # If site is predominantly SPA (>40% JS pages) — render all of them
+        spa_limit = len(all_js) if js_ratio > 0.4 else MAX_PLAYWRIGHT_SPA
+        js_urls      = all_js[:spa_limit]
         blocked_urls = [p["url"] for p in self.pages
                         if p.get("status_code") in (403, 429, 503) or
                            (p.get("error") and p.get("status_code") == 0)][:20]
