@@ -966,11 +966,11 @@
             const estimated = job.estimated_total || 0;
             const bar = document.getElementById('progressBar');
             let p, label;
-            if (estimated > 0) {
-              // We know the sitemap total — show real progress
+            if (estimated > 0 && crawled <= estimated) {
+              // We know the sitemap total and haven't exceeded it — show real progress
               p = Math.min(crawled / estimated * 100, 97);
               bar.classList.remove('indeterminate');
-              label = `Crawling${dot} ${crawled} / ${estimated} pages`;
+              label = `Crawling${dot} ${crawled} pages`;
             } else {
               // Sitemap not yet fetched — indeterminate shimmer at 5%
               p = 5;

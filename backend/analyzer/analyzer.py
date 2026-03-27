@@ -66,6 +66,8 @@ class PageReport:
 
     # Performance/technical (from crawler)
     load_time_ms: int = 0
+    ttfb_ms: int | None = None
+    dom_ready_ms: int | None = None
     crawl_depth: int = 0
     is_redirect: bool = False
     redirect_to: str = ""
@@ -94,9 +96,11 @@ def analyze_page(page_data: dict, base_domain: str) -> PageReport:
 
     # Pull crawler-provided fields
     report.load_time_ms = page_data.get("load_time_ms", 0)
-    report.crawl_depth = page_data.get("crawl_depth", 0)
-    report.is_redirect = page_data.get("is_redirect", False)
-    report.redirect_to = page_data.get("redirect_to", "")
+    report.ttfb_ms      = page_data.get("ttfb_ms")
+    report.dom_ready_ms = page_data.get("dom_ready_ms")
+    report.crawl_depth  = page_data.get("crawl_depth", 0)
+    report.is_redirect  = page_data.get("is_redirect", False)
+    report.redirect_to  = page_data.get("redirect_to", "")
     report.js_dependent = page_data.get("js_dependent", False)
 
     # URL quality checks
@@ -446,6 +450,8 @@ def aggregate_reports(page_reports: list[PageReport]) -> dict:
                 "error": r.error,
                 # New fields
                 "load_time_ms": r.load_time_ms,
+                "ttfb_ms": r.ttfb_ms,
+                "dom_ready_ms": r.dom_ready_ms,
                 "crawl_depth": r.crawl_depth,
                 "is_redirect": r.is_redirect,
                 "redirect_to": r.redirect_to,
