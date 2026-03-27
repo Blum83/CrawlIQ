@@ -343,8 +343,12 @@ class SiteCrawler:
                 ],
             )
             context = await browser.new_context(
-                user_agent="Mozilla/5.0 (compatible; AIQABot/1.0)",
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
                 java_script_enabled=True,
+                extra_http_headers={
+                    "Accept-Language": "en-US,en;q=0.9",
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                },
             )
 
             tasks = [self._playwright_fetch(context, sem, url, url in perf_set) for url in urls]
@@ -362,6 +366,14 @@ class SiteCrawler:
             try:
                 page = await context.new_page()
                 response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                # Give JS frameworks a moment to inject content (Next.js, Nuxt, etc.)
+                try:
+                    await page.wait_for_function(
+                        "() => document.title.length > 0 || document.querySelector('h1')",
+                        timeout=5000
+                    )
+                except Exception:
+                    pass
                 html = await page.content()
 
                 ttfb_ms = dom_ready_ms = load_time_ms = None
