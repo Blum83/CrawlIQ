@@ -162,8 +162,13 @@ class SiteCrawler:
         # deduplicate, preserve order
         playwright_urls: list[str] = list(dict.fromkeys(js_urls + blocked_urls + perf_urls))
 
+        new_links: list[str] = []
         if playwright_urls:
-            await self._playwright_phase(playwright_urls)
+            new_links = await self._playwright_phase(playwright_urls)
+
+        # Phase 3 — httpx crawl for links discovered via JS rendering (SPA navigation)
+        if new_links and len(self.pages) < self.max_pages:
+            await self._httpx_phase(new_links)
 
         return self.pages, meta_files
 
@@ -319,8 +324,9 @@ class SiteCrawler:
 
     # ── Phase 2: Playwright ────────────────────────────────────────────────────
 
-    async def _playwright_phase(self, urls: list[str]):
-        """Re-fetch JS pages + capture performance.timing for perf sample."""
+    async def _playwright_phase(self, urls: list[str]) -> list[str]:
+        """Re-fetch JS pages + capture performance.timing for perf sample.
+        Returns list of newly discovered links (for Phase 3 httpx crawl)."""
         from playwright.async_api import async_playwright
 
         perf_set = set(urls[:MAX_PLAYWRIGHT_PERF])
@@ -336,10 +342,9 @@ class SiteCrawler:
                     "--disable-extensions",
                     "--disable-background-networking",
                     "--disable-sync",
-                    "--metrics-recording-only",
                     "--mute-audio",
                     "--no-first-run",
-                    "--blink-settings=imagesEnabled=false",
+                    "--disable-blink-features=AutomationControlled",
                 ],
             )
             context = await browser.new_context(
@@ -350,17 +355,32 @@ class SiteCrawler:
                     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
                 },
             )
+            # Remove navigator.webdriver fingerprint (detectable by CF/bot protection)
+            await context.add_init_script(
+                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+            )
 
             tasks = [self._playwright_fetch(context, sem, url, url in perf_set) for url in urls]
-            await asyncio.gather(*tasks)
+            results = await asyncio.gather(*tasks)
 
             await context.close()
             await browser.close()
 
+        # Collect links discovered from rendered HTML (JS navigation links)
+        new_links: list[str] = []
+        seen_new: set[str] = set()
+        for link_list in results:
+            for link in (link_list or []):
+                norm = self._normalize(link)
+                if norm not in self.visited and norm not in seen_new:
+                    seen_new.add(norm)
+                    new_links.append(link)
+        return new_links
+
     async def _playwright_fetch(self, context, sem: asyncio.Semaphore,
-                                url: str, capture_perf: bool):
+                                url: str, capture_perf: bool) -> list[str]:
         if self._cancel_check and self._cancel_check():
-            return
+            return []
 
         async with sem:
             try:
@@ -440,5 +460,15 @@ class SiteCrawler:
                         "plain_word_count": 0,
                     })
 
+                # Extract links from rendered HTML for Phase 3 discovery
+                discovered: list[str] = []
+                soup_links = BeautifulSoup(html, "html.parser")
+                for tag in soup_links.find_all("a", href=True):
+                    full = urljoin(url, tag["href"])
+                    if self._is_same_domain(full) and not self._is_asset(full) and not self._is_excluded(full):
+                        discovered.append(full)
+                return discovered[:100]
+
             except Exception:
                 pass   # Keep existing httpx data if Playwright fails
+            return []
