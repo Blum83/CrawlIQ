@@ -966,17 +966,16 @@
             const estimated = job.estimated_total || 0;
             const bar = document.getElementById('progressBar');
             let p, label;
-            if (estimated > 0 && crawled <= estimated) {
-              // We know the sitemap total and haven't exceeded it — show real progress
+            if (estimated > 0) {
+              // We have a sitemap estimate — show real progress, cap at 97%
               p = Math.min(crawled / estimated * 100, 97);
               bar.classList.remove('indeterminate');
-              label = `Crawling${dot} ${crawled} pages`;
             } else {
-              // Sitemap not yet fetched — indeterminate shimmer at 5%
+              // No estimate yet — indeterminate shimmer
               p = 5;
               bar.classList.add('indeterminate');
-              label = crawled > 0 ? `Crawling${dot} ${crawled} pages` : `Crawling${dot}`;
             }
+            label = crawled > 0 ? `Crawling${dot} ${crawled} pages` : `Crawling${dot}`;
             bar.style.width = p + '%';
             setStatus(label);
           } else if (job.status === 'done') {

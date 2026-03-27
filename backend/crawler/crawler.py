@@ -271,8 +271,9 @@ class SiteCrawler:
             if self._on_progress:
                 self._on_progress(len(self.pages))
 
-            # Discover links only on non-JS pages (JS pages won't have links in raw HTML)
-            if js_dependent or depth >= 10:
+            # Always try link discovery — even JS-rendered pages often have
+            # navigation <a href> tags in the raw HTML (Next.js, Nuxt, etc.)
+            if depth >= 10:
                 return []
 
             links = []
