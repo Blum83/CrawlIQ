@@ -149,11 +149,14 @@ class SiteCrawler:
         # Phase 1 — fast httpx crawl
         await self._httpx_phase(sitemap_seeds)
 
-        # Phase 2 — Playwright for JS pages + perf sample
-        js_urls   = [p["url"] for p in self.pages if p.get("js_dependent")][:MAX_PLAYWRIGHT_SPA]
-        perf_urls = [p["url"] for p in self.pages[:MAX_PLAYWRIGHT_PERF]]
+        # Phase 2 — Playwright for JS pages + blocked pages + perf sample
+        js_urls      = [p["url"] for p in self.pages if p.get("js_dependent")][:MAX_PLAYWRIGHT_SPA]
+        blocked_urls = [p["url"] for p in self.pages
+                        if p.get("status_code") in (403, 429, 503) or
+                           (p.get("error") and p.get("status_code") == 0)][:20]
+        perf_urls    = [p["url"] for p in self.pages[:MAX_PLAYWRIGHT_PERF]]
         # deduplicate, preserve order
-        playwright_urls: list[str] = list(dict.fromkeys(js_urls + perf_urls))
+        playwright_urls: list[str] = list(dict.fromkeys(js_urls + blocked_urls + perf_urls))
 
         if playwright_urls:
             await self._playwright_phase(playwright_urls)
@@ -186,7 +189,14 @@ class SiteCrawler:
         async with httpx.AsyncClient(
             timeout=20,
             follow_redirects=True,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; AIQABot/1.0)"},
+            headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+                "Accept-Language": "en-US,en;q=0.5",
+                "Accept-Encoding": "gzip, deflate, br",
+                "Connection": "keep-alive",
+                "Upgrade-Insecure-Requests": "1",
+            },
             verify=False,
         ) as client:
 
@@ -377,6 +387,10 @@ class SiteCrawler:
                 if idx is not None:
                     entry = self.pages[idx]
                     entry["html"] = html
+                    # Fix status for previously blocked pages (403/503 via httpx)
+                    if entry.get("status_code") in (403, 429, 503, 0) and response:
+                        entry["status_code"] = response.status
+                        entry["error"] = None
                     if load_time_ms is not None:
                         entry["load_time_ms"] = load_time_ms
                     if ttfb_ms is not None:
