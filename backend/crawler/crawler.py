@@ -2,6 +2,7 @@ import asyncio
 import time
 import xml.etree.ElementTree as ET
 from urllib.parse import urljoin, urlparse
+from playwright.async_api import async_playwright
 from bs4 import BeautifulSoup
 
 try:
@@ -10,26 +11,28 @@ try:
 except ImportError:
     _HTTPX_AVAILABLE = False
 
-MAX_HTTPX_CONCURRENT    = 15   # parallel httpx fetches
-MAX_PLAYWRIGHT_CONCURRENT = 3  # parallel Playwright pages (RAM-heavy)
-JS_WORD_THRESHOLD       = 30   # body words below this → likely JS-rendered
+MAX_CONCURRENT = 3  # max parallel browser pages (reduced to save RAM)
+
+_DEFAULT_META = {
+    "robots_txt_exists": False,
+    "sitemap_exists": False,
+    "sitemap_urls": [],
+    "robots_disallows": [],
+}
 
 
 class SiteCrawler:
-    def __init__(self, base_url: str, max_pages: int = 50, on_progress=None,
-                 on_sitemap=None, exclude_patterns: list[str] | None = None, cancel_check=None):
-        self.base_url   = base_url.rstrip("/")
-        self.domain     = urlparse(base_url).netloc
-        self.max_pages  = max_pages
-        self.visited:   set[str]   = set()
-        self.pages:     list[dict] = []
-        self._page_index: dict[str, int] = {}   # normalized_url → index in self.pages
-        self._on_progress  = on_progress
-        self._on_sitemap   = on_sitemap
-        self._cancel_check = cancel_check
+    def __init__(self, base_url: str, max_pages: int = 50, on_progress=None, on_sitemap=None, exclude_patterns: list[str] | None = None, cancel_check=None):
+        self.base_url = base_url.rstrip("/")
+        self.domain = urlparse(base_url).netloc
+        self.max_pages = max_pages
+        self.visited: set[str] = set()
+        self.pages: list[dict] = []
+        self._sem: asyncio.Semaphore | None = None
+        self._on_progress = on_progress  # optional callback(crawled: int)
+        self._on_sitemap = on_sitemap    # optional callback(estimated_total: int)
+        self._cancel_check = cancel_check  # optional callback() -> bool
         self._exclude = [p.strip() for p in (exclude_patterns or []) if p.strip()]
-
-    # ── helpers ────────────────────────────────────────────────────────────────
 
     def _is_same_domain(self, url: str) -> bool:
         return urlparse(url).netloc == self.domain
@@ -42,15 +45,9 @@ class SiteCrawler:
         parsed = urlparse(url)
         return f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/")
 
-    def _is_asset(self, url: str) -> bool:
-        return any(url.lower().endswith(ext)
-                   for ext in (".pdf", ".jpg", ".jpeg", ".png", ".gif",
-                               ".webp", ".svg", ".zip", ".css", ".js"))
-
-    # ── sitemap / robots ───────────────────────────────────────────────────────
-
-    async def _parse_sitemap(self, client, sitemap_url: str, depth: int = 0,
-                             _raw_store: list | None = None) -> list[str]:
+    async def _parse_sitemap(self, client, sitemap_url: str, depth: int = 0, _raw_store: list | None = None) -> list[str]:
+        """Recursively collect all page URLs from a sitemap or sitemap index.
+        _raw_store: if provided, appends (url, raw_text) tuples for each fetched sitemap."""
         if depth > 3:
             return []
         try:
@@ -61,20 +58,25 @@ class SiteCrawler:
                 _raw_store.append((sitemap_url, r.text))
             root = ET.fromstring(r.text)
             ns = {"sm": "http://www.sitemaps.org/schemas/sitemap/0.9"}
+
+            # Sitemap index — recurse into child sitemaps
             child_sitemaps = root.findall(".//sm:sitemap/sm:loc", ns)
             if child_sitemaps:
                 all_urls: list[str] = []
-                for loc in child_sitemaps[:20]:
+                for loc in child_sitemaps[:20]:  # cap at 20 child sitemaps
                     child_urls = await self._parse_sitemap(client, loc.text.strip(), depth + 1, _raw_store)
                     all_urls.extend(child_urls)
                 return all_urls
+
+            # Regular sitemap — return page URLs
             return [loc.text.strip() for loc in root.findall(".//sm:loc", ns) if loc.text]
         except Exception:
             return []
 
     async def fetch_meta_files(self) -> dict:
+        """Fetch robots.txt and sitemap.xml from the base domain."""
         parsed = urlparse(self.base_url)
-        base   = f"{parsed.scheme}://{parsed.netloc}"
+        base = f"{parsed.scheme}://{parsed.netloc}"
         result = {
             "robots_txt_exists": False,
             "sitemap_exists": False,
@@ -84,16 +86,21 @@ class SiteCrawler:
         }
         if not _HTTPX_AVAILABLE:
             return result
+
         try:
-            async with httpx.AsyncClient(timeout=10, follow_redirects=True,
-                                         headers={"User-Agent": "Googlebot/2.1"}) as client:
+            async with httpx.AsyncClient(
+                timeout=10,
+                follow_redirects=True,
+                headers={"User-Agent": "Googlebot/2.1"},
+            ) as client:
                 # robots.txt
                 try:
                     r = await client.get(f"{base}/robots.txt")
                     if r.status_code == 200 and "text" in r.headers.get("content-type", "text"):
                         result["robots_txt_exists"] = True
                         result["robots_txt_content"] = r.text
-                        disallows, sitemap_hints = [], []
+                        disallows = []
+                        sitemap_from_robots: list[str] = []
                         for line in r.text.splitlines():
                             line = line.strip()
                             if line.lower().startswith("disallow:"):
@@ -103,13 +110,13 @@ class SiteCrawler:
                             elif line.lower().startswith("sitemap:"):
                                 val = line[len("sitemap:"):].strip()
                                 if val:
-                                    sitemap_hints.append(val)
+                                    sitemap_from_robots.append(val)
                         result["robots_disallows"] = disallows
-                        result["_sitemap_hints"]   = sitemap_hints
+                        result["_sitemap_hints"] = sitemap_from_robots
                 except Exception:
                     pass
 
-                # sitemap.xml
+                # sitemap.xml — try /sitemap.xml, then any hints from robots.txt
                 sitemap_candidates = [f"{base}/sitemap.xml"] + result.pop("_sitemap_hints", [])
                 all_sitemap_urls: list[str] = []
                 sitemap_raw_files: list[tuple[str, str]] = []
@@ -119,23 +126,27 @@ class SiteCrawler:
                         result["sitemap_exists"] = True
                         all_sitemap_urls.extend(urls)
 
-                result["sitemap_raw_files"] = sitemap_raw_files
+                result["sitemap_raw_files"] = sitemap_raw_files  # list of (url, xml_text)
+
+                # Deduplicate
                 seen: set[str] = set()
                 unique: list[str] = []
                 for u in all_sitemap_urls:
                     if u not in seen:
                         seen.add(u)
                         unique.append(u)
+
                 result["sitemap_all_urls"] = unique
-                result["sitemap_urls"]     = unique[:5]
+                result["sitemap_urls"] = unique[:5]  # display only
         except Exception:
             pass
+
         return result
 
-    # ── main entry ────────────────────────────────────────────────────────────
-
     async def crawl(self) -> tuple[list[dict], dict]:
-        meta_files    = await self.fetch_meta_files()
+        meta_files = await self.fetch_meta_files()
+
+        # Pre-seed queue with same-domain sitemap URLs
         sitemap_seeds = [
             u for u in meta_files.get("sitemap_all_urls", [])
             if self._is_same_domain(u) and not self._is_excluded(u)
@@ -144,186 +155,7 @@ class SiteCrawler:
         if self._on_sitemap and sitemap_seeds:
             self._on_sitemap(min(len(sitemap_seeds), self.max_pages))
 
-        # Phase 1 — fast httpx crawl
-        await self._httpx_phase(sitemap_seeds)
-
-        # Phase 2 — Playwright for ALL pages: JS rendering + performance.timing
-        js_urls      = [p["url"] for p in self.pages if p.get("js_dependent")]
-        blocked_urls = [p["url"] for p in self.pages
-                        if p.get("status_code") in (403, 429, 503) or
-                           (p.get("error") and p.get("status_code") == 0)][:20]
-        all_urls     = [p["url"] for p in self.pages]
-        # JS/blocked first (priority), then all remaining pages for perf metrics
-        playwright_urls: list[str] = list(dict.fromkeys(js_urls + blocked_urls + all_urls))
-
-        new_links: list[str] = []
-        if playwright_urls:
-            new_links = await self._playwright_phase(playwright_urls)
-
-        # Phase 3 — httpx crawl for links discovered via JS rendering (SPA navigation)
-        if new_links and len(self.pages) < self.max_pages:
-            await self._httpx_phase(new_links)
-
-        return self.pages, meta_files
-
-    # ── Phase 1: httpx ────────────────────────────────────────────────────────
-
-    async def _httpx_phase(self, sitemap_seeds: list[str]):
-        queued: set[str] = set()
-        active_tasks: set[asyncio.Task] = set()
-        link_queue: asyncio.Queue = asyncio.Queue()
-
-        def maybe_enqueue(url: str, depth: int):
-            norm = self._normalize(url)
-            if (norm not in queued
-                    and norm not in self.visited
-                    and not self._is_excluded(url)
-                    and not self._is_asset(url)
-                    and len(queued) + len(self.pages) < self.max_pages):
-                queued.add(norm)
-                link_queue.put_nowait((url, depth))
-
-        maybe_enqueue(self.base_url, 0)
-        for u in sitemap_seeds:
-            maybe_enqueue(u, 1)
-
-        sem = asyncio.Semaphore(MAX_HTTPX_CONCURRENT)
-
-        async with httpx.AsyncClient(
-            timeout=20,
-            follow_redirects=True,
-            headers={
-                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
-                "Accept-Encoding": "gzip, deflate, br",
-                "Connection": "keep-alive",
-                "Upgrade-Insecure-Requests": "1",
-            },
-            verify=False,
-        ) as client:
-
-            async def run_fetch(url: str, depth: int):
-                async with sem:
-                    new_links = await self._httpx_fetch(client, url, depth)
-                    for link_url, link_depth in new_links:
-                        maybe_enqueue(link_url, link_depth)
-
-            while not link_queue.empty() or active_tasks:
-                if self._cancel_check and self._cancel_check():
-                    break
-
-                while (not link_queue.empty()
-                       and len(active_tasks) < MAX_HTTPX_CONCURRENT * 2
-                       and len(self.pages) < self.max_pages):
-                    url, depth = link_queue.get_nowait()
-                    task = asyncio.create_task(run_fetch(url, depth))
-                    active_tasks.add(task)
-                    task.add_done_callback(active_tasks.discard)
-
-                if active_tasks:
-                    await asyncio.wait(active_tasks,
-                                       return_when=asyncio.FIRST_COMPLETED,
-                                       timeout=0.1)
-
-    async def _httpx_fetch(self, client: "httpx.AsyncClient",
-                           url: str, depth: int) -> list[tuple[str, int]]:
-        """Fetch one URL via httpx. Returns list of (discovered_url, depth) pairs."""
-        if len(self.pages) >= self.max_pages:
-            return []
-        norm = self._normalize(url)
-        if norm in self.visited:
-            return []
-        self.visited.add(norm)
-
-        try:
-            t0 = time.monotonic()
-            resp = await client.get(url, timeout=20)
-            elapsed_ms = int((time.monotonic() - t0) * 1000)
-
-            content_type = resp.headers.get("content-type", "")
-            if "html" not in content_type:
-                return []
-
-            final_url  = str(resp.url)
-            is_redirect = self._normalize(final_url) != norm
-
-            html = resp.text
-            soup = BeautifulSoup(html, "html.parser")
-
-            # JS detection: count visible words in body
-            body = soup.find("body")
-            if body:
-                for tag in body(["script", "style"]):
-                    tag.decompose()
-                raw_text = body.get_text(separator=" ")
-            else:
-                raw_text = soup.get_text(separator=" ")
-            word_count  = len([w for w in raw_text.split() if w.strip()])
-            js_dependent = word_count < JS_WORD_THRESHOLD
-
-            page_data = {
-                "url":           url,
-                "html":          html,
-                "status_code":   resp.status_code,
-                "error":         None,
-                "load_time_ms":  elapsed_ms,   # server response time (no JS)
-                "ttfb_ms":       None,          # filled by Playwright phase
-                "dom_ready_ms":  None,
-                "crawl_depth":   depth,
-                "is_redirect":   is_redirect,
-                "redirect_to":   final_url if is_redirect else "",
-                "js_dependent":  js_dependent,
-                "plain_word_count": word_count,
-            }
-
-            idx = len(self.pages)
-            self.pages.append(page_data)
-            self._page_index[norm] = idx
-
-            if self._on_progress:
-                self._on_progress(len(self.pages))
-
-            # Always try link discovery — even JS-rendered pages often have
-            # navigation <a href> tags in the raw HTML (Next.js, Nuxt, etc.)
-            if depth >= 10:
-                return []
-
-            links = []
-            for tag in soup.find_all("a", href=True):
-                full = urljoin(url, tag["href"])
-                if self._is_same_domain(full) and not self._is_asset(full):
-                    links.append((full, depth + 1))
-
-            return links[:50]
-
-        except Exception as e:
-            self.pages.append({
-                "url":           url,
-                "html":          "",
-                "status_code":   0,
-                "error":         str(e),
-                "load_time_ms":  0,
-                "ttfb_ms":       None,
-                "dom_ready_ms":  None,
-                "crawl_depth":   depth,
-                "is_redirect":   False,
-                "redirect_to":   "",
-                "js_dependent":  False,
-                "plain_word_count": 0,
-            })
-            if self._on_progress:
-                self._on_progress(len(self.pages))
-            return []
-
-    # ── Phase 2: Playwright ────────────────────────────────────────────────────
-
-    async def _playwright_phase(self, urls: list[str]) -> list[str]:
-        """Re-fetch all pages via Playwright: JS rendering + performance.timing for every page.
-        Returns list of newly discovered links (for Phase 3 httpx crawl)."""
-        from playwright.async_api import async_playwright
-
-        sem = asyncio.Semaphore(MAX_PLAYWRIGHT_CONCURRENT)
+        self._sem = asyncio.Semaphore(MAX_CONCURRENT)
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(
@@ -335,132 +167,175 @@ class SiteCrawler:
                     "--disable-extensions",
                     "--disable-background-networking",
                     "--disable-sync",
+                    "--metrics-recording-only",
                     "--mute-audio",
                     "--no-first-run",
-                    "--disable-blink-features=AutomationControlled",
+                    "--blink-settings=imagesEnabled=false",
                 ],
             )
             context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                user_agent="Mozilla/5.0 (compatible; AIQABot/1.0)",
                 java_script_enabled=True,
-                extra_http_headers={
-                    "Accept-Language": "en-US,en;q=0.9",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                },
-            )
-            # Remove navigator.webdriver fingerprint (detectable by CF/bot protection)
-            await context.add_init_script(
-                "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
             )
 
-            tasks = [self._playwright_fetch(context, sem, url) for url in urls]
-            results = await asyncio.gather(*tasks)
+            # Phase 1: link-following from homepage
+            await self._crawl_page(context, self.base_url, depth=0)
+
+            # Phase 2: crawl sitemap URLs not yet discovered by link-following
+            remaining = [
+                u for u in sitemap_seeds
+                if self._normalize(u) not in self.visited and len(self.visited) < self.max_pages
+            ]
+            if remaining:
+                tasks = [self._crawl_page(context, u, depth=1) for u in remaining]
+                await asyncio.gather(*tasks)
 
             await context.close()
             await browser.close()
 
-        # Collect links discovered from rendered HTML (JS navigation links)
-        new_links: list[str] = []
-        seen_new: set[str] = set()
-        for link_list in results:
-            for link in (link_list or []):
-                norm = self._normalize(link)
-                if norm not in self.visited and norm not in seen_new:
-                    seen_new.add(norm)
-                    new_links.append(link)
-        return new_links
+        return self.pages, meta_files
 
-    async def _playwright_fetch(self, context, sem: asyncio.Semaphore,
-                                url: str) -> list[str]:
+    async def _crawl_page(self, context, url: str, depth: int = 0):
         if self._cancel_check and self._cancel_check():
-            return []
+            return
+        normalized = self._normalize(url)
+        if normalized in self.visited or len(self.visited) >= self.max_pages:
+            return
+        if self._is_excluded(url):
+            return
+        self.visited.add(normalized)
 
-        async with sem:
+        async with self._sem:
             try:
                 page = await context.new_page()
+
+                # Capture raw (pre-JS) HTML via route interception — no extra HTTP request needed
+                raw_html_ref: list[str] = []
+
+                async def _capture_raw(route, request):
+                    if request.resource_type == "document" and not raw_html_ref:
+                        resp = await route.fetch()
+                        try:
+                            raw_html_ref.append((await resp.body()).decode("utf-8", errors="ignore"))
+                        except Exception:
+                            raw_html_ref.append("")
+                        await route.fulfill(response=resp)
+                    else:
+                        await route.continue_()
+
+                await page.route("**/*", _capture_raw)
+
+                t0 = time.monotonic()
                 response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
-                # Give JS frameworks a moment to inject content (Next.js, Nuxt, etc.)
-                try:
-                    await page.wait_for_function(
-                        "() => document.title.length > 0 || document.querySelector('h1')",
-                        timeout=5000
-                    )
-                except Exception:
-                    pass
+                load_time_ms = int((time.monotonic() - t0) * 1000)
+                status_code = response.status if response else 0
+                final_url = page.url  # URL after any redirects
+
+                # Detect redirect
+                is_redirect = False
+                redirect_to = ""
+                norm_original = self._normalize(url)
+                norm_final = self._normalize(final_url)
+                if norm_final and norm_final != norm_original:
+                    is_redirect = True
+                    redirect_to = final_url
+
                 html = await page.content()
 
-                ttfb_ms = dom_ready_ms = load_time_ms = None
+                # JS rendering check: compare raw HTML word count vs rendered
+                js_dependent = False
+                plain_word_count = 0
+                if raw_html_ref:
+                    try:
+                        plain_soup = BeautifulSoup(raw_html_ref[0], "html.parser")
+                        plain_body = plain_soup.find("body")
+                        if plain_body:
+                            for tag in plain_body(["script", "style"]):
+                                tag.decompose()
+                            plain_text = plain_body.get_text(separator=" ")
+                        else:
+                            plain_text = plain_soup.get_text(separator=" ")
+                        plain_word_count = len([w for w in plain_text.split() if w.strip()])
+
+                        rendered_soup = BeautifulSoup(html, "html.parser")
+                        rendered_body = rendered_soup.find("body")
+                        if rendered_body:
+                            for tag in rendered_body(["script", "style"]):
+                                tag.decompose()
+                            rendered_text = rendered_body.get_text(separator=" ")
+                        else:
+                            rendered_text = rendered_soup.get_text(separator=" ")
+                        rendered_words = len([w for w in rendered_text.split() if w.strip()])
+
+                        if rendered_words > 0 and plain_word_count / rendered_words < 0.5:
+                            js_dependent = True
+                    except Exception:
+                        pass
+
+                # performance.timing — бесплатно, страница уже загружена
+                ttfb_ms = dom_ready_ms = None
                 try:
                     timing = await page.evaluate("""() => {
                         const t = performance.timing;
                         return {
                             ttfb:      t.responseStart - t.navigationStart,
                             dom_ready: t.domContentLoadedEventEnd - t.navigationStart,
-                            load_time: t.loadEventEnd > 0
-                                       ? t.loadEventEnd - t.navigationStart
-                                       : null,
                         };
                     }""")
                     ttfb_ms      = timing.get("ttfb")
                     dom_ready_ms = timing.get("dom_ready")
-                    load_time_ms = timing.get("load_time")
                 except Exception:
                     pass
 
                 await page.close()
+            except Exception as e:
+                self.pages.append({
+                    "url": url,
+                    "error": str(e),
+                    "html": "",
+                    "status_code": 0,
+                    "load_time_ms": 0,
+                    "ttfb_ms": None,
+                    "dom_ready_ms": None,
+                    "crawl_depth": depth,
+                    "is_redirect": False,
+                    "redirect_to": "",
+                    "js_dependent": False,
+                    "plain_word_count": 0,
+                })
+                return
 
-                norm = self._normalize(url)
-                idx  = self._page_index.get(norm)
+        self.pages.append({
+            "url": url,
+            "html": html,
+            "status_code": status_code,
+            "error": None,
+            "load_time_ms": load_time_ms,
+            "ttfb_ms": ttfb_ms,
+            "dom_ready_ms": dom_ready_ms,
+            "crawl_depth": depth,
+            "is_redirect": is_redirect,
+            "redirect_to": redirect_to,
+            "js_dependent": js_dependent,
+            "plain_word_count": plain_word_count,
+        })
 
-                if idx is not None:
-                    entry = self.pages[idx]
-                    entry["html"] = html
-                    # Fix status for previously blocked pages (403/503 via httpx)
-                    if entry.get("status_code") in (403, 429, 503, 0) and response:
-                        entry["status_code"] = response.status
-                        entry["error"] = None
-                    if load_time_ms is not None:
-                        entry["load_time_ms"] = load_time_ms
-                    if ttfb_ms is not None:
-                        entry["ttfb_ms"]     = ttfb_ms
-                    if dom_ready_ms is not None:
-                        entry["dom_ready_ms"] = dom_ready_ms
+        if self._on_progress:
+            self._on_progress(len(self.pages))
 
-                    # If this was a JS page, re-count words from rendered HTML
-                    if entry.get("js_dependent"):
-                        soup = BeautifulSoup(html, "html.parser")
-                        body = soup.find("body")
-                        if body:
-                            for tag in body(["script", "style"]):
-                                tag.decompose()
-                            text = body.get_text(separator=" ")
-                            entry["plain_word_count"] = len([w for w in text.split() if w.strip()])
-                else:
-                    # URL only in Playwright list but missed by httpx (edge case)
-                    self.pages.append({
-                        "url":            url,
-                        "html":           html,
-                        "status_code":    response.status if response else 0,
-                        "error":          None,
-                        "load_time_ms":   load_time_ms or 0,
-                        "ttfb_ms":        ttfb_ms,
-                        "dom_ready_ms":   dom_ready_ms,
-                        "crawl_depth":    0,
-                        "is_redirect":    False,
-                        "redirect_to":    "",
-                        "js_dependent":   True,
-                        "plain_word_count": 0,
-                    })
+        soup = BeautifulSoup(html, "html.parser")
+        links = []
+        for tag in soup.find_all("a", href=True):
+            href = tag["href"]
+            full_url = urljoin(url, href)
+            norm = self._normalize(full_url)
+            if (
+                self._is_same_domain(full_url)
+                and norm not in self.visited
+                and not self._is_excluded(full_url)
+                and not any(full_url.endswith(ext) for ext in [".pdf", ".jpg", ".png", ".zip", ".css", ".js"])
+            ):
+                links.append(full_url)
 
-                # Extract links from rendered HTML for Phase 3 discovery
-                discovered: list[str] = []
-                soup_links = BeautifulSoup(html, "html.parser")
-                for tag in soup_links.find_all("a", href=True):
-                    full = urljoin(url, tag["href"])
-                    if self._is_same_domain(full) and not self._is_asset(full) and not self._is_excluded(full):
-                        discovered.append(full)
-                return discovered[:100]
-
-            except Exception:
-                pass   # Keep existing httpx data if Playwright fails
-            return []
+        tasks = [self._crawl_page(context, link, depth=depth + 1) for link in links[:50]]
+        await asyncio.gather(*tasks)
