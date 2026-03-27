@@ -12,8 +12,6 @@ except ImportError:
 
 MAX_HTTPX_CONCURRENT    = 15   # parallel httpx fetches
 MAX_PLAYWRIGHT_CONCURRENT = 3  # parallel Playwright pages (RAM-heavy)
-MAX_PLAYWRIGHT_SPA      = 50   # max JS-rendered pages to re-render
-MAX_PLAYWRIGHT_PERF     = 10   # pages to capture performance.timing on
 JS_WORD_THRESHOLD       = 30   # body words below this → likely JS-rendered
 
 
@@ -149,18 +147,14 @@ class SiteCrawler:
         # Phase 1 — fast httpx crawl
         await self._httpx_phase(sitemap_seeds)
 
-        # Phase 2 — Playwright for JS pages + blocked pages + perf sample
-        all_js = [p["url"] for p in self.pages if p.get("js_dependent")]
-        js_ratio = len(all_js) / max(len(self.pages), 1)
-        # If site is predominantly SPA (>40% JS pages) — render all of them
-        spa_limit = len(all_js) if js_ratio > 0.4 else MAX_PLAYWRIGHT_SPA
-        js_urls      = all_js[:spa_limit]
+        # Phase 2 — Playwright for ALL pages: JS rendering + performance.timing
+        js_urls      = [p["url"] for p in self.pages if p.get("js_dependent")]
         blocked_urls = [p["url"] for p in self.pages
                         if p.get("status_code") in (403, 429, 503) or
                            (p.get("error") and p.get("status_code") == 0)][:20]
-        perf_urls    = [p["url"] for p in self.pages[:MAX_PLAYWRIGHT_PERF]]
-        # deduplicate, preserve order
-        playwright_urls: list[str] = list(dict.fromkeys(js_urls + blocked_urls + perf_urls))
+        all_urls     = [p["url"] for p in self.pages]
+        # JS/blocked first (priority), then all remaining pages for perf metrics
+        playwright_urls: list[str] = list(dict.fromkeys(js_urls + blocked_urls + all_urls))
 
         new_links: list[str] = []
         if playwright_urls:
@@ -325,11 +319,10 @@ class SiteCrawler:
     # ── Phase 2: Playwright ────────────────────────────────────────────────────
 
     async def _playwright_phase(self, urls: list[str]) -> list[str]:
-        """Re-fetch JS pages + capture performance.timing for perf sample.
+        """Re-fetch all pages via Playwright: JS rendering + performance.timing for every page.
         Returns list of newly discovered links (for Phase 3 httpx crawl)."""
         from playwright.async_api import async_playwright
 
-        perf_set = set(urls[:MAX_PLAYWRIGHT_PERF])
         sem = asyncio.Semaphore(MAX_PLAYWRIGHT_CONCURRENT)
 
         async with async_playwright() as p:
@@ -360,7 +353,7 @@ class SiteCrawler:
                 "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
             )
 
-            tasks = [self._playwright_fetch(context, sem, url, url in perf_set) for url in urls]
+            tasks = [self._playwright_fetch(context, sem, url) for url in urls]
             results = await asyncio.gather(*tasks)
 
             await context.close()
@@ -378,7 +371,7 @@ class SiteCrawler:
         return new_links
 
     async def _playwright_fetch(self, context, sem: asyncio.Semaphore,
-                                url: str, capture_perf: bool) -> list[str]:
+                                url: str) -> list[str]:
         if self._cancel_check and self._cancel_check():
             return []
 
@@ -397,23 +390,22 @@ class SiteCrawler:
                 html = await page.content()
 
                 ttfb_ms = dom_ready_ms = load_time_ms = None
-                if capture_perf:
-                    try:
-                        timing = await page.evaluate("""() => {
-                            const t = performance.timing;
-                            return {
-                                ttfb:      t.responseStart - t.navigationStart,
-                                dom_ready: t.domContentLoadedEventEnd - t.navigationStart,
-                                load_time: t.loadEventEnd > 0
-                                           ? t.loadEventEnd - t.navigationStart
-                                           : null,
-                            };
-                        }""")
-                        ttfb_ms      = timing.get("ttfb")
-                        dom_ready_ms = timing.get("dom_ready")
-                        load_time_ms = timing.get("load_time")
-                    except Exception:
-                        pass
+                try:
+                    timing = await page.evaluate("""() => {
+                        const t = performance.timing;
+                        return {
+                            ttfb:      t.responseStart - t.navigationStart,
+                            dom_ready: t.domContentLoadedEventEnd - t.navigationStart,
+                            load_time: t.loadEventEnd > 0
+                                       ? t.loadEventEnd - t.navigationStart
+                                       : null,
+                        };
+                    }""")
+                    ttfb_ms      = timing.get("ttfb")
+                    dom_ready_ms = timing.get("dom_ready")
+                    load_time_ms = timing.get("load_time")
+                except Exception:
+                    pass
 
                 await page.close()
 
