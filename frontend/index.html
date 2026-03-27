@@ -696,6 +696,30 @@
       transition: width 0.6s ease;
     }
 
+    /* Site header */
+    .site-header {
+      text-align: center;
+      margin-bottom: 32px;
+    }
+
+    .features-row {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 8px;
+      margin-top: 20px;
+    }
+
+    .feature-pill {
+      background: #1a1a24;
+      border: 1px solid #2d2d3d;
+      border-radius: 99px;
+      padding: 6px 14px;
+      font-size: 0.8rem;
+      color: #94a3b8;
+      white-space: nowrap;
+    }
+
     /* Mobile fixes */
     @media (max-width: 500px) {
       .card { padding: 20px 16px; }
@@ -712,8 +736,18 @@
   </style>
 </head>
 <body>
-  <h1>CrawlIQ</h1>
-  <p class="subtitle">AI-powered website audit — SEO, accessibility, performance</p>
+  <header class="site-header">
+    <h1>CrawlIQ</h1>
+    <p class="subtitle">AI-powered website audit — SEO, accessibility, performance</p>
+    <div class="features-row">
+      <div class="feature-pill">&#128269; Full site crawl</div>
+      <div class="feature-pill">&#127757; SEO issues</div>
+      <div class="feature-pill">&#9855; Accessibility</div>
+      <div class="feature-pill">&#128200; Performance</div>
+      <div class="feature-pill">&#129302; AI summary</div>
+      <div class="feature-pill">&#128196; Export HTML / Excel / CSV</div>
+    </div>
+  </header>
 
   <div class="card">
     <div class="input-row">
@@ -783,6 +817,24 @@
     let _urlModalData = {};   // stores full url lists keyed by id
     let _urlModalLabels = {}; // stores human-readable labels keyed by id
 
+    // ── URL routing ────────────────────────────────────────────────────────────
+    function setJobInUrl(jobId) {
+      const url = jobId ? `?job=${jobId}` : window.location.pathname;
+      history.replaceState(null, '', url);
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      const params = new URLSearchParams(window.location.search);
+      const jobId = params.get('job');
+      if (jobId) {
+        currentJobId = jobId;
+        document.getElementById('analyzeBtn').disabled = true;
+        setStatus('Restoring report...');
+        showProgress(true);
+        pollStatus(jobId);
+      }
+    });
+
     function showModal(title, msg) {
       document.getElementById('modalTitle').textContent = title;
       document.getElementById('modalMsg').textContent = msg;
@@ -843,6 +895,7 @@
       document.getElementById('analyzeBtn').disabled = true;
       document.getElementById('report').style.display = 'none';
       document.getElementById('exportBtns').style.display = 'none';
+      setJobInUrl(null);
       setStatus('Starting analysis...');
       showProgress(true);
 
@@ -855,6 +908,7 @@
         const job = await res.json();
         if (!res.ok) { showModal('Cannot start analysis', job.detail || 'Failed to start'); document.getElementById('analyzeBtn').disabled = false; showProgress(false); return; }
         currentJobId = job.job_id;
+        setJobInUrl(job.job_id);
         document.getElementById('cancelBtn').disabled = false;
         document.getElementById('cancelWrap').style.display = 'block';
         pollStatus(job.job_id);
@@ -874,6 +928,7 @@
           if (res.status === 404) {
             clearInterval(pollInterval);
             document.getElementById('cancelWrap').style.display = 'none';
+            setJobInUrl(null);
             setStatus('Session expired — server was restarted. Please run the analysis again.');
             showProgress(false);
             document.getElementById('analyzeBtn').disabled = false;

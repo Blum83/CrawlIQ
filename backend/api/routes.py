@@ -1,4 +1,6 @@
+import os
 import sys
+import json
 import asyncio
 import threading
 from urllib.parse import urlparse
@@ -13,6 +15,12 @@ try:
 except ImportError:
     _HTTPX_AVAILABLE = False
 
+try:
+    import redis as _redis_lib
+    _REDIS_AVAILABLE = True
+except ImportError:
+    _REDIS_AVAILABLE = False
+
 from crawler.crawler import SiteCrawler
 from analyzer.analyzer import analyze_page, aggregate_reports
 from agent.qa_agent import generate_ai_summary
@@ -20,8 +28,43 @@ from exporter.export import export_html, export_excel, export_csv
 
 router = APIRouter()
 
-# In-memory job store (use Redis in production)
-jobs: dict[str, dict] = {}
+JOB_TTL = 2 * 60 * 60  # 2 hours
+
+# ── Job store: Redis if REDIS_URL is set, otherwise in-memory dict ────────────
+
+_redis_client = None
+_jobs_fallback: dict[str, dict] = {}
+
+
+def _get_redis():
+    global _redis_client
+    if _redis_client is None and _REDIS_AVAILABLE:
+        url = os.getenv("REDIS_URL")
+        if url:
+            _redis_client = _redis_lib.from_url(url, decode_responses=True)
+    return _redis_client
+
+
+def job_get(job_id: str) -> dict | None:
+    r = _get_redis()
+    if r:
+        raw = r.get(f"job:{job_id}")
+        return json.loads(raw) if raw else None
+    return _jobs_fallback.get(job_id)
+
+
+def job_set(job_id: str, data: dict):
+    r = _get_redis()
+    if r:
+        r.setex(f"job:{job_id}", JOB_TTL, json.dumps(data))
+    else:
+        _jobs_fallback[job_id] = data
+
+
+def job_update(job_id: str, **kwargs):
+    data = job_get(job_id) or {}
+    data.update(kwargs)
+    job_set(job_id, data)
 
 
 class AnalyzeRequest(BaseModel):
@@ -40,7 +83,7 @@ class JobStatus(BaseModel):
 
 
 async def run_analysis(job_id: str, url: str, max_pages: int, exclude_patterns: list[str] = []):
-    jobs[job_id]["status"] = "running"
+    job_update(job_id, status="running")
 
     try:
         # 0. Resolve protocol: try https first, fall back to http if needed
@@ -48,15 +91,14 @@ async def run_analysis(job_id: str, url: str, max_pages: int, exclude_patterns: 
 
         # 1. Crawl (progress updated in real-time via callback)
         def on_progress(crawled: int):
-            jobs[job_id]["progress"] = crawled
+            job_update(job_id, progress=crawled)
 
         def cancel_check() -> bool:
-            return jobs.get(job_id, {}).get("status") == "cancelled"
+            return (job_get(job_id) or {}).get("status") == "cancelled"
 
         crawler = SiteCrawler(url, max_pages=max_pages, on_progress=on_progress, exclude_patterns=exclude_patterns, cancel_check=cancel_check)
         pages, meta_files = await crawler.crawl()
-        jobs[job_id]["total"] = len(pages)
-        jobs[job_id]["progress"] = len(pages)
+        job_update(job_id, total=len(pages), progress=len(pages))
 
         # 2. Analyze each page
         domain = urlparse(url).netloc
@@ -72,13 +114,11 @@ async def run_analysis(job_id: str, url: str, max_pages: int, exclude_patterns: 
         aggregated["ai_summary"] = await generate_ai_summary(url, aggregated)
         aggregated["target_url"] = url
 
-        jobs[job_id]["status"] = "done"
-        jobs[job_id]["result"] = aggregated
+        job_update(job_id, status="done", result=aggregated)
 
     except Exception as e:
-        if jobs.get(job_id, {}).get("status") != "cancelled":
-            jobs[job_id]["status"] = "error"
-            jobs[job_id]["error"] = str(e)
+        if (job_get(job_id) or {}).get("status") != "cancelled":
+            job_update(job_id, status="error", error=str(e))
 
 
 def _run_in_proactor_thread(job_id: str, url: str, max_pages: int, exclude_patterns: list[str]):
@@ -155,7 +195,7 @@ async def start_analysis(req: AnalyzeRequest, background_tasks: BackgroundTasks)
     url = _validate_url(req.url)
 
     job_id = str(uuid.uuid4())
-    jobs[job_id] = {
+    initial = {
         "job_id": job_id,
         "status": "pending",
         "progress": 0,
@@ -163,66 +203,83 @@ async def start_analysis(req: AnalyzeRequest, background_tasks: BackgroundTasks)
         "result": None,
         "error": None,
     }
+    job_set(job_id, initial)
 
     # Use a thread with its own ProactorEventLoop so Playwright can spawn subprocesses
     t = threading.Thread(target=_run_in_proactor_thread, args=(job_id, url, req.max_pages, req.exclude_patterns), daemon=True)
     t.start()
 
-    return JobStatus(**jobs[job_id])
+    return JobStatus(**initial)
 
 
 @router.get("/status/{job_id}", response_model=JobStatus)
 async def get_status(job_id: str):
-    if job_id not in jobs:
+    job = job_get(job_id)
+    if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    return JobStatus(**jobs[job_id])
+    return JobStatus(**job)
+
+
+def _report_filename(target_url: str, ext: str) -> str:
+    """Build a filename like yummyani.me-qa-report-2026-03-27.html"""
+    from datetime import date
+    import re
+    domain = urlparse(target_url).netloc or "site"
+    domain = re.sub(r"^www\.", "", domain)
+    domain = re.sub(r"[^\w.\-]", "_", domain)
+    today = date.today().isoformat()
+    return f"{domain}-qa-report-{today}.{ext}"
+
+
+def _get_done_result(job_id: str) -> dict:
+    job = job_get(job_id)
+    if not job or job.get("status") != "done":
+        raise HTTPException(status_code=404, detail="Report not ready")
+    return job["result"]
 
 
 @router.get("/export/{job_id}/html")
 async def export_report_html(job_id: str):
-    if job_id not in jobs or jobs[job_id]["status"] != "done":
-        raise HTTPException(status_code=404, detail="Report not ready")
-    result = jobs[job_id]["result"]
+    result = _get_done_result(job_id)
     html = export_html(result.get("target_url", ""), result)
+    fname = _report_filename(result.get("target_url", ""), "html")
     return HTMLResponse(content=html, headers={
-        "Content-Disposition": f'attachment; filename="qa-report-{job_id[:8]}.html"'
+        "Content-Disposition": f'attachment; filename="{fname}"'
     })
 
 
 @router.get("/export/{job_id}/excel")
 async def export_report_excel(job_id: str):
-    if job_id not in jobs or jobs[job_id]["status"] != "done":
-        raise HTTPException(status_code=404, detail="Report not ready")
-    result = jobs[job_id]["result"]
+    result = _get_done_result(job_id)
     data = export_excel(result.get("target_url", ""), result)
+    fname = _report_filename(result.get("target_url", ""), "xlsx")
     return Response(content=data, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    headers={"Content-Disposition": f'attachment; filename="qa-report-{job_id[:8]}.xlsx"'})
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
 
 @router.get("/export/{job_id}/csv")
 async def export_report_csv(job_id: str):
-    if job_id not in jobs or jobs[job_id]["status"] != "done":
-        raise HTTPException(status_code=404, detail="Report not ready")
-    result = jobs[job_id]["result"]
+    result = _get_done_result(job_id)
     data = export_csv(result)
+    fname = _report_filename(result.get("target_url", ""), "csv")
     return Response(content=data, media_type="text/csv",
-                    headers={"Content-Disposition": f'attachment; filename="qa-pages-{job_id[:8]}.csv"'})
+                    headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
 
 @router.post("/cancel/{job_id}")
 async def cancel_job(job_id: str):
-    if job_id not in jobs:
+    job = job_get(job_id)
+    if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    if jobs[job_id]["status"] == "running":
-        jobs[job_id]["status"] = "cancelled"
-    return {"job_id": job_id, "status": jobs[job_id]["status"]}
+    if job["status"] == "running":
+        job_update(job_id, status="cancelled")
+    return {"job_id": job_id, "status": (job_get(job_id) or {}).get("status")}
 
 
 @router.get("/export/{job_id}/robots")
 async def export_robots(job_id: str):
-    if job_id not in jobs or jobs[job_id]["status"] != "done":
-        raise HTTPException(status_code=404, detail="Report not ready")
-    meta = jobs[job_id]["result"].get("meta_files", {})
+    result = _get_done_result(job_id)
+    meta = result.get("meta_files", {})
     content = meta.get("robots_txt_content", "")
     if not content:
         raise HTTPException(status_code=404, detail="robots.txt not found for this site")
@@ -235,9 +292,8 @@ async def export_robots(job_id: str):
 
 @router.get("/export/{job_id}/sitemap")
 async def export_sitemap(job_id: str):
-    if job_id not in jobs or jobs[job_id]["status"] != "done":
-        raise HTTPException(status_code=404, detail="Report not ready")
-    meta = jobs[job_id]["result"].get("meta_files", {})
+    result = _get_done_result(job_id)
+    meta = result.get("meta_files", {})
     raw_files: list = meta.get("sitemap_raw_files", [])
     if not raw_files:
         raise HTTPException(status_code=404, detail="sitemap not found for this site")
