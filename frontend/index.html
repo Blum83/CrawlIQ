@@ -838,15 +838,25 @@
     let _urlModalData = {};   // stores full url lists keyed by id
     let _urlModalLabels = {}; // stores human-readable labels keyed by id
 
-    // ── URL routing ────────────────────────────────────────────────────────────
+    // ── Job persistence (sessionStorage — clean URL) ───────────────────────────
     function setJobInUrl(jobId) {
-      const url = jobId ? `?job=${jobId}` : window.location.pathname;
-      history.replaceState(null, '', url);
+      if (jobId) {
+        sessionStorage.setItem('crawliq_job', jobId);
+      } else {
+        sessionStorage.removeItem('crawliq_job');
+      }
+      // Keep URL clean — no ?job= param
+      history.replaceState(null, '', window.location.pathname);
     }
 
     window.addEventListener('DOMContentLoaded', () => {
+      // Support legacy ?job= links (shared URLs) — then clean the URL
       const params = new URLSearchParams(window.location.search);
-      const jobId = params.get('job');
+      const jobId = params.get('job') || sessionStorage.getItem('crawliq_job');
+      if (params.get('job')) {
+        sessionStorage.setItem('crawliq_job', params.get('job'));
+        history.replaceState(null, '', window.location.pathname);
+      }
       if (jobId) {
         currentJobId = jobId;
         document.getElementById('analyzeBtn').disabled = true;
