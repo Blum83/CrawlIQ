@@ -11,7 +11,7 @@ try:
 except ImportError:
     _HTTPX_AVAILABLE = False
 
-MAX_CONCURRENT = 3  # max parallel browser pages (reduced to save RAM)
+MAX_CONCURRENT = 2  # max parallel browser pages (reduced to save RAM)
 
 _DEFAULT_META = {
     "robots_txt_exists": False,
@@ -171,6 +171,12 @@ class SiteCrawler:
                     "--mute-audio",
                     "--no-first-run",
                     "--blink-settings=imagesEnabled=false",
+                    "--js-flags=--max-old-space-size=128",
+                    "--disable-software-rasterizer",
+                    "--disable-features=TranslateUI",
+                    "--single-process",
+                    "--disable-backgrounding-occluded-windows",
+                    "--renderer-process-limit=1",
                 ],
             )
             context = await browser.new_context(

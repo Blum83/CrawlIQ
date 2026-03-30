@@ -1,5 +1,6 @@
 import os
 import sys
+import gc
 import json
 import asyncio
 import threading
@@ -104,14 +105,18 @@ async def run_analysis(job_id: str, url: str, max_pages: int, exclude_patterns: 
         pages, meta_files = await crawler.crawl()
         job_update(job_id, total=len(pages), progress=len(pages))
 
-        # 2. Analyze each page
+        # 2. Analyze each page (free HTML after parsing to reduce memory)
         domain = urlparse(url).netloc
         page_reports = [analyze_page(p, domain) for p in pages]
+        del pages
+        crawler = None  # allow GC of crawler + its pages list
 
         # 3. Aggregate
         aggregated = aggregate_reports(page_reports)
+        del page_reports
 
-        # 4. Attach meta files (robots.txt / sitemap)
+        # 4. Attach meta files (robots.txt / sitemap) — keep raw files for export but trim large content
+        meta_files.pop("sitemap_all_urls", None)  # can be thousands of URLs
         aggregated["meta_files"] = meta_files
 
         # 5. AI summary (optional — uses Groq or Gemini if key is set)
@@ -119,6 +124,8 @@ async def run_analysis(job_id: str, url: str, max_pages: int, exclude_patterns: 
         aggregated["target_url"] = url
 
         job_update(job_id, status="done", result=aggregated)
+        del aggregated
+        gc.collect()
 
     except Exception as e:
         if (job_get(job_id) or {}).get("status") != "cancelled":

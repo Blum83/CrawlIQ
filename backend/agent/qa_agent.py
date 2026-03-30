@@ -50,7 +50,8 @@ class GroqProvider(AIProvider):
         raise RuntimeError("All Groq models failed")
 
     async def _call(self, prompt: str, model: str) -> str:
-        async with httpx.AsyncClient(timeout=60) as client:
+        client = httpx.AsyncClient(timeout=60)
+        try:
             r = await client.post(
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {self.api_key}"},
@@ -62,6 +63,8 @@ class GroqProvider(AIProvider):
             )
             r.raise_for_status()
             return r.json()["choices"][0]["message"]["content"]
+        finally:
+            await client.aclose()
 
 
 # ─── Gemini ────────────────────────────────────────────────────────────────────
