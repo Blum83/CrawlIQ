@@ -2,6 +2,7 @@ import os
 import sys
 import gc
 import json
+import time
 import asyncio
 import threading
 from urllib.parse import urlparse
@@ -29,12 +30,13 @@ from exporter.export import export_html, export_excel, export_csv
 
 router = APIRouter()
 
-JOB_TTL = 2 * 60 * 60  # 2 hours
+JOB_TTL = 45 * 60  # 45 minutes
 
 # ── Job store: Redis if REDIS_URL is set, otherwise in-memory dict ────────────
 
 _redis_client = None
 _jobs_fallback: dict[str, dict] = {}
+_jobs_fallback_ts: dict[str, float] = {}  # creation timestamps for TTL eviction
 
 
 def _get_redis():
@@ -54,12 +56,22 @@ def job_get(job_id: str) -> dict | None:
     return _jobs_fallback.get(job_id)
 
 
+def _evict_expired_fallback_jobs():
+    now = time.time()
+    expired = [jid for jid, ts in _jobs_fallback_ts.items() if now - ts > JOB_TTL]
+    for jid in expired:
+        _jobs_fallback.pop(jid, None)
+        _jobs_fallback_ts.pop(jid, None)
+
+
 def job_set(job_id: str, data: dict):
     r = _get_redis()
     if r:
         r.setex(f"job:{job_id}", JOB_TTL, json.dumps(data))
     else:
+        _evict_expired_fallback_jobs()
         _jobs_fallback[job_id] = data
+        _jobs_fallback_ts.setdefault(job_id, time.time())
 
 
 def job_update(job_id: str, **kwargs):

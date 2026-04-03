@@ -171,17 +171,19 @@ class SiteCrawler:
                     "--mute-audio",
                     "--no-first-run",
                     "--blink-settings=imagesEnabled=false",
-                    "--js-flags=--max-old-space-size=128",
+                    "--js-flags=--max-old-space-size=64",
                     "--disable-software-rasterizer",
                     "--disable-features=TranslateUI",
-                    "--single-process",
                     "--disable-backgrounding-occluded-windows",
-                    "--renderer-process-limit=1",
+                    "--renderer-process-limit=2",
+                    "--disable-remote-fonts",
+                    "--disable-font-subpixel-positioning",
                 ],
             )
             context = await browser.new_context(
                 user_agent="Mozilla/5.0 (compatible; AIQABot/1.0)",
                 java_script_enabled=True,
+                viewport={"width": 1280, "height": 720},
             )
 
             # Phase 1: link-following from homepage
@@ -285,6 +287,8 @@ class SiteCrawler:
                             js_dependent = True
                     except Exception:
                         pass
+                    finally:
+                        raw_html_ref.clear()  # free raw HTML — no longer needed
 
                 # performance.timing — бесплатно, страница уже загружена
                 ttfb_ms = dom_ready_ms = None
